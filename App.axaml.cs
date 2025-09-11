@@ -15,12 +15,25 @@ using static Avalonia.Application;
 
 namespace Autodraw;
 
-public class App : Application
+public partial class App : Application
 {
-    public static string CurrentTheme = Config.GetEntry("theme") ?? "avares://Autodraw/Styles/dark.axaml";
+    private const string ThemeConfigKey = "theme";
+    private const string IsDarkThemeConfigKey = "isDarkTheme";
+    private static readonly string DefaultThemeUri = new UriBuilder("avares", typeof(App).Assembly.GetName().Name ?? string.Empty, -1, "Styles/dark.axaml").Uri.ToString();
+    private static string _currentTheme = Config.GetEntry(ThemeConfigKey) ?? DefaultThemeUri;
+    public static string CurrentTheme
+    {
+        get => _currentTheme;
+        private set => _currentTheme = value;
+    }
 
-    public static bool SavedIsDark =
-        Config.GetEntry("isDarkTheme") == null || bool.Parse(Config.GetEntry("isDarkTheme") ?? "true");
+    private static bool _savedIsDark =
+        Config.GetEntry(IsDarkThemeConfigKey) == null || bool.Parse(Config.GetEntry(IsDarkThemeConfigKey) ?? "true");
+    public static bool SavedIsDark
+    {
+        get => _savedIsDark;
+        private set => _savedIsDark = value;
+    }
 
     private static int themeIndex = 5;
 
@@ -31,31 +44,29 @@ public class App : Application
         try
         {
             // Tries loading back to our original loaded theme.
-            var Resource = (IStyle)AvaloniaXamlLoader.Load(
-                new Uri(CurrentTheme)
-            );
+            var Resource = (IStyle)AvaloniaXamlLoader.Load(new Uri(CurrentTheme));
             Current.RequestedThemeVariant = SavedIsDark ? ThemeVariant.Dark : ThemeVariant.Light;
             if (Current.Styles.Count > themeIndex)
-                Current.Styles.Remove(Current.Styles[themeIndex]);
-            Current.Styles.Add(Resource);
-            Config.SetEntry("theme", CurrentTheme);
-            Config.SetEntry("isDarkTheme", SavedIsDark.ToString());
+                Current.Styles[themeIndex] = Resource;
+            else
+                Current.Styles.Add(Resource);
+            Config.SetEntry(ThemeConfigKey, CurrentTheme);
+            Config.SetEntry(IsDarkThemeConfigKey, SavedIsDark.ToString());
         }
         catch
         {
             Console.WriteLine("Theme Failed 2");
             // Tries loading our default theme. Purpose of this is if a theme somehow vanished.
-            var Resource = (IStyle)AvaloniaXamlLoader.Load(
-                new Uri("avares://Autodraw/Styles/dark.axaml")
-            );
+            var Resource = (IStyle)AvaloniaXamlLoader.Load(new Uri(DefaultThemeUri));
             Current.RequestedThemeVariant = ThemeVariant.Dark;
             if (Current.Styles.Count > themeIndex)
-                Current.Styles.Remove(Current.Styles[themeIndex]);
-            Current.Styles.Add(Resource);
-            CurrentTheme = "avares://Autodraw/Styles/dark.axaml";
+                Current.Styles[themeIndex] = Resource;
+            else
+                Current.Styles.Add(Resource);
+            CurrentTheme = DefaultThemeUri;
             SavedIsDark = true;
-            Config.SetEntry("theme", "avares://Autodraw/Styles/dark.axaml");
-            Config.SetEntry("isDarkTheme", true.ToString());
+            Config.SetEntry(ThemeConfigKey, DefaultThemeUri);
+            Config.SetEntry(IsDarkThemeConfigKey, true.ToString());
         }
     }
 
@@ -66,11 +77,10 @@ public class App : Application
         {
             // Tries loading as runtime uncompiled.
             var TextInput = themeText;
-            TextInput = Regex.Replace(TextInput, @"file:./", AppDomain.CurrentDomain.BaseDirectory);
+            TextInput = MyRegex().Replace(TextInput, AppDomain.CurrentDomain.BaseDirectory);
             if (themeUri != "")
             {
-                TextInput = Regex.Replace(TextInput, @"style:./",
-                    Regex.Replace(themeUri, @"\\(?:.(?!\\))+$", "") + "\\");
+                TextInput = MyRegex1().Replace(TextInput, Regex.Replace(themeUri, @"\\(?:.(?!\\))+$", "") + "\\");
             }
             else
             {
@@ -78,7 +88,7 @@ public class App : Application
             }
             Match isCodeDark = Regex.Match(TextInput, @"<!--#DarkTheme-->");
             Match isCodeLight = Regex.Match(TextInput, @"<!--#LightTheme-->");
-            if (isCodeDark.Success && isCodeLight.Success) throw new Exception("My brother in christ, you cannot have both DarkTheme and LightTheme.");
+            if (isCodeDark.Success && isCodeLight.Success) throw new InvalidOperationException("Both DarkTheme and LightTheme markers cannot be present at the same time.");
             if (isCodeDark.Success) isDark = true;
             if (isCodeLight.Success) isDark = false;
             
@@ -86,18 +96,20 @@ public class App : Application
             // Please push to github.com/Avalonia, its revolutionary.
             Console.WriteLine(typeof(Binding));
             
-            var Resource = AvaloniaRuntimeXamlLoader.Parse<Styles>(
-                TextInput
-            );
+            var Resource = AvaloniaRuntimeXamlLoader.Parse<Styles>(TextInput);
             Current.RequestedThemeVariant = isDark ? ThemeVariant.Dark : ThemeVariant.Light;
-            Current.Styles.Remove(Current.Styles[themeIndex]);
-            Current.Styles.Add(Resource);
+
+            if (Current.Styles.Count > themeIndex)
+                Current.Styles[themeIndex] = Resource;
+            else
+                Current.Styles.Add(Resource);
+
             if (themeUri != "")
             {
                 CurrentTheme = themeUri;
                 SavedIsDark = isDark;
-                Config.SetEntry("theme", themeUri);
-                Config.SetEntry("isDarkTheme", isDark.ToString());
+                Config.SetEntry(ThemeConfigKey, themeUri);
+                Config.SetEntry(IsDarkThemeConfigKey, isDark.ToString());
             }
         }
         catch (Exception ex)
@@ -112,7 +124,6 @@ public class App : Application
         OutputMessage += "# Theme loaded successfully!\n";
         return OutputMessage;
     }
-
     public static string? LoadTheme(string themeUri, bool isDark = true)
     {
         // Behold, terrible bruteforce-ey code! Performance be damned!
@@ -120,16 +131,18 @@ public class App : Application
         {
             Console.WriteLine("Loading Compiled Code");
             // Tries loading as Compiled.
-            var Resource = (IStyle)AvaloniaXamlLoader.Load(
-                new Uri(themeUri)
-            );
+            var Resource = (IStyle)AvaloniaXamlLoader.Load(new Uri(themeUri));
             Current.RequestedThemeVariant = isDark ? ThemeVariant.Dark : ThemeVariant.Light;
-            Current.Styles.Remove(Current.Styles[themeIndex]);
-            Current.Styles.Add(Resource);
+
+            if (Current.Styles.Count > themeIndex)
+                Current.Styles[themeIndex] = Resource;
+            else
+                Current.Styles.Add(Resource);
+
             CurrentTheme = themeUri;
             SavedIsDark = isDark;
-            Config.SetEntry("theme", themeUri);
-            Config.SetEntry("isDarkTheme", isDark.ToString());
+            Config.SetEntry(ThemeConfigKey, themeUri);
+            Config.SetEntry(IsDarkThemeConfigKey, isDark.ToString());
         }
         catch
         {
@@ -152,7 +165,6 @@ public class App : Application
 
         return null;
     }
-
     public override void Initialize()
     {
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
@@ -164,7 +176,7 @@ public class App : Application
         RegisterGlobalExceptionHandlers();
     }
 
-    private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    private static void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
         Utils.Log(e.Exception.ToString());
         Utils.Log(e.Exception.Message);
@@ -184,7 +196,7 @@ public class App : Application
         Dispatcher.UIThread.UnhandledException += (sender, e) =>
         {
             e.Handled = true;
-            HandleException(e.Exception);
+            _ = HandleException(e.Exception);
         };
 
         // Handle non-UI thread unhandled exceptions
@@ -192,7 +204,7 @@ public class App : Application
         {
             if (e.ExceptionObject is Exception ex)
             {
-                HandleException(ex);
+                _ = HandleException(ex);
             }
         };
 
@@ -200,11 +212,11 @@ public class App : Application
         TaskScheduler.UnobservedTaskException += (sender, e) =>
         {
             e.SetObserved();
-            HandleException(e.Exception);
+            _ = HandleException(e.Exception);
         };
     }
 
-    private async void HandleException(Exception exception)
+    private async Task HandleException(Exception exception)
     {
         await ShowExceptionDialog(exception);
     }
@@ -242,4 +254,8 @@ public class App : Application
             await messageBox.ShowDialog(mainWindow);
     }
 
+    [GeneratedRegex(@"file:./")]
+    private static partial Regex MyRegex();
+    [GeneratedRegex(@"style:./")]
+    private static partial Regex MyRegex1();
 }

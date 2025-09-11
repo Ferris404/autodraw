@@ -9,6 +9,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -25,25 +26,27 @@ namespace Autodraw;
 
 public class ActionDisp
 {
-    public string Text { get; set; }
-    public InputAction boundAction { get; set; }
+    public required string Text { get; set; }
+    public required InputAction boundAction { get; set; }
     public int Speed { get; set; }
     public int Delay { get; set; }
 }
 
 public partial class MainWindow : Window
 {
-    public static MainWindow? CurrentMainWindow;
+    public static MainWindow? CurrentMainWindow { get; private set; }
     private OpenAIPrompt? _aiPrompt;
     private DevTest? _devwindow;
     private Bitmap? _displayedBitmap;
     private bool _inChange;
 
-    private readonly Regex _numberRegex = new(@"[^0-9]");
+    private readonly Regex _numberRegex = MyRegex();
+
+    private static Regex MyRegex() => new Regex(@"[^0-9]", RegexOptions.Compiled);
 
     // Automation
     public ObservableCollection<ActionDisp> ActionsContext { get; set; } = new();
-    private List<InputAction> _actionStack = new();
+    private readonly List<InputAction> _actionStack = new();
     List<SKBitmap> _layersStack = new();
 
     private long _lastMem;
@@ -56,14 +59,14 @@ public partial class MainWindow : Window
     private SKBitmap? _processedBitmap;
 
     private SKBitmap? _rawBitmap = new(318, 318, true);
-    private bool _isAnimatedImage = false;
+    private bool _isAnimatedImage;
 
     private Settings? _settings;
 
-    public int widthLock = 0;
-    public int heightLock = 0;
-    public int widthNumber = 1;
-    public int heightNumber = 1;
+    public int WidthLockValue { get; set; }
+    public int HeightLockValue { get; set; }
+    public int WidthNumber { get; set; } = 1;
+    public int HeightNumber { get; set; } = 1;
 
     public MainWindow()
     {
@@ -84,7 +87,6 @@ public partial class MainWindow : Window
         CurrentMainWindow = this;
         // Onboarding
         //if (!File.Exists(Config.ConfigPath)) 
-        //new Onboarding(CurrentMainWindow);
         Config.init();
 
         UpdateActionsContext();
@@ -264,59 +266,87 @@ public partial class MainWindow : Window
 
     public void ImportImage(string? path, byte[]? img = null)
     {
+        ClearLayersStack();
+
+        if (IsGif(path, img))
+        {
+            ImportGifImage(path);
+        }
+        else
+        {
+            ImportBitmapImage(path, img);
+        }
+
+        _processedBitmap?.Dispose();
+        _processedBitmap = null;
+        ImagePreview.Image = _displayedBitmap;
+
+        UpdateImageInputs();
+
+        if (WidthLockValue > 0 || HeightLockValue > 0)
+            ResizeImage(_displayedBitmap.Size.Width, _displayedBitmap.Size.Height);
+    }
+
+    private void ClearLayersStack()
+    {
         if (_layersStack.Count > 0)
         {
             foreach (var f in _layersStack) f.Dispose();
             _layersStack.Clear();
         }
         _isAnimatedImage = false;
+    }
 
-        if (img is null && !string.IsNullOrWhiteSpace(path) && path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+    private static bool IsGif(string? path, byte[]? img)
+    {
+        return img is null && !string.IsNullOrWhiteSpace(path) && path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ImportGifImage(string? path)
+    {
+        try
         {
-            try
+            var frames = DecodeGifFrames(path);
+            if (frames.Count > 0)
             {
-                var frames = DecodeGifFrames(path);
-                if (frames.Count > 0)
-                {
-                    _layersStack = frames;
-                    _rawBitmap = frames[0].Copy();
-                    _preFxBitmap = _rawBitmap.Copy();
-                    _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
-                    _isAnimatedImage = true;
-                }
-                else
-                {
-                    _rawBitmap = SKBitmap.Decode(path).NormalizeColor();
-                    _preFxBitmap = _rawBitmap.Copy();
-                    _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
-                }
-            }
-            catch
-            {
-                _rawBitmap = SKBitmap.Decode(path).NormalizeColor();
+                _layersStack = frames;
+                _rawBitmap = frames[0].Copy();
                 _preFxBitmap = _rawBitmap.Copy();
                 _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+                _isAnimatedImage = true;
+            }
+            else
+            {
+                InitBitmapFromPath(path);
             }
         }
-        else
+        catch
         {
-            _rawBitmap = img is null ? SKBitmap.Decode(path).NormalizeColor() : SKBitmap.Decode(img).NormalizeColor();
-            _preFxBitmap = _rawBitmap.Copy();
-            _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+            InitBitmapFromPath(path);
         }
-        _processedBitmap?.Dispose();
-        _processedBitmap = null;
-        ImagePreview.Image = _displayedBitmap;
+    }
 
+    private void ImportBitmapImage(string? path, byte[]? img)
+    {
+        _rawBitmap = img is null ? SKBitmap.Decode(path).NormalizeColor() : SKBitmap.Decode(img).NormalizeColor();
+        _preFxBitmap = _rawBitmap.Copy();
+        _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+    }
+
+    private void InitBitmapFromPath(string? path)
+    {
+        _rawBitmap = SKBitmap.Decode(path).NormalizeColor();
+        _preFxBitmap = _rawBitmap.Copy();
+        _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+    }
+
+    private void UpdateImageInputs()
+    {
         _inChange = true;
-        SizeSlider.Value = 100;
-
         PercentageNumber.Text = $"{Math.Round(SizeSlider.Value)}%";
-        WidthInput.Text = widthLock > 0 ? widthLock.ToString() : _displayedBitmap.Size.Width.ToString();
-        HeightInput.Text =  heightLock > 0 ? heightLock.ToString() : _displayedBitmap.Size.Height.ToString();
+        WidthInput.Text = WidthLockValue > 0 ? WidthLockValue.ToString() : _displayedBitmap.Size.Width.ToString();
+        HeightInput.Text = HeightLockValue > 0 ? HeightLockValue.ToString() : _displayedBitmap.Size.Height.ToString();
         _inChange = false;
-        
-        if (widthLock > 0 || heightLock > 0) ResizeImage(_displayedBitmap.Size.Width, _displayedBitmap.Size.Height);
     }
 
     private static List<SKBitmap> DecodeGifFrames(string gifPath)
@@ -387,7 +417,7 @@ public partial class MainWindow : Window
             hook.RunAsync();
         }
         if (Drawing.IsDrawing) return;
-        Drawing.ChosenAlgorithm = (byte)AlgorithmSelection.SelectedIndex;
+
 
         if (_isAnimatedImage && _layersStack.Count > 0)
         {
@@ -441,74 +471,80 @@ public partial class MainWindow : Window
     {
         var source = (TextBox)e.Source;
         source.Text = _numberRegex.Replace(source.Text, "");
-        e.Handled = true;
-
-        if (source.Text.Length < 1) source.Text = "0";
     }
 
     private void ResizeImage(double width, double height)
     {
-        width = widthLock > 0 ? widthLock : Math.Max(1, width);
-        height = heightLock > 0 ? heightLock :  Math.Max(1, height);
+        width = WidthLockValue > 0 ? WidthLockValue : Math.Max(1, width);
+        height = HeightLockValue > 0 ? HeightLockValue : Math.Max(1, height);
 
-        if (widthLock == 0) widthNumber = (int)width;
-        if (heightLock == 0) heightNumber = (int)height;
-        
-        if (GC.GetTotalMemory(false) < _lastMem) GC.RemoveMemoryPressure(_lastMem);
-        _lastMem = GC.GetTotalMemory(false);
+        if (WidthLockValue == 0) WidthNumber = (int)width;
+        if (HeightLockValue == 0) HeightNumber = (int)height;
+
+        UpdateMemoryPressure();
+
+        var newSize = new SKSizeI((int)width, (int)height);
 
         if (_processedBitmap == null)
         {
-            var newSize = new SKSizeI((int)width, (int)height);
-            var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
-            _preFxBitmap.Dispose();
-            _preFxBitmap = resizedBitmap;
-            _displayedBitmap?.Dispose();
-            _displayedBitmap = resizedBitmap.ConvertToAvaloniaBitmap();
-            ImagePreview.Image = _displayedBitmap;
-            GC.AddMemoryPressure(resizedBitmap.ByteCount);
-
-            // If an animated image is loaded, resize all frames to keep stack consistent
-            if (_isAnimatedImage && _layersStack.Count > 0)
-            {
-                var resizedFrames = new List<SKBitmap>(_layersStack.Count);
-                foreach (var frame in _layersStack)
-                {
-                    var r = frame.Resize(newSize, SKFilterQuality.High);
-                    resizedFrames.Add(r);
-                }
-                foreach (var f in _layersStack) f.Dispose();
-                _layersStack = resizedFrames;
-            }
+            ResizeRawBitmap(newSize);
         }
-        else if (_processedBitmap != null)
+        else
         {
-            var newSize = new SKSizeI((int)width, (int)height);
-            var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
-            _preFxBitmap.Dispose();
-            _preFxBitmap = resizedBitmap;
-            var postProcessBitmap = ImageProcessing.Process(resizedBitmap, GetSelectFilters());
-            _processedBitmap.Dispose();
-            _processedBitmap = postProcessBitmap;
-            _displayedBitmap?.Dispose();
-            _displayedBitmap = postProcessBitmap.ConvertToAvaloniaBitmap();
-            ImagePreview.Image = _displayedBitmap;
-            GC.AddMemoryPressure(resizedBitmap.ByteCount);
-
-            if (_isAnimatedImage && _layersStack.Count > 0)
-            {
-                var resizedFrames = new List<SKBitmap>(_layersStack.Count);
-                foreach (var frame in _layersStack)
-                {
-                    var r = frame.Resize(newSize, SKFilterQuality.High);
-                    resizedFrames.Add(r);
-                }
-                foreach (var f in _layersStack) f.Dispose();
-                _layersStack = resizedFrames;
-            }
+            ResizeProcessedBitmap(newSize);
         }
     }
 
+    private void UpdateMemoryPressure()
+    {
+        if (GC.GetTotalMemory(false) < _lastMem)
+            GC.RemoveMemoryPressure(_lastMem);
+        _lastMem = GC.GetTotalMemory(false);
+    }
+
+    private void ResizeRawBitmap(SKSizeI newSize)
+    {
+        var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
+        _preFxBitmap.Dispose();
+        _preFxBitmap = resizedBitmap;
+        _displayedBitmap?.Dispose();
+        _displayedBitmap = resizedBitmap.ConvertToAvaloniaBitmap();
+        ImagePreview.Image = _displayedBitmap;
+        GC.AddMemoryPressure(resizedBitmap.ByteCount);
+
+        ResizeAnimatedFramesIfNeeded(newSize);
+    }
+
+    private void ResizeProcessedBitmap(SKSizeI newSize)
+    {
+        var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
+        _preFxBitmap.Dispose();
+        _preFxBitmap = resizedBitmap;
+        var postProcessBitmap = ImageProcessing.Process(resizedBitmap, GetSelectFilters());
+        _processedBitmap.Dispose();
+        _processedBitmap = postProcessBitmap;
+        _displayedBitmap?.Dispose();
+        _displayedBitmap = postProcessBitmap.ConvertToAvaloniaBitmap();
+        ImagePreview.Image = _displayedBitmap;
+        GC.AddMemoryPressure(resizedBitmap.ByteCount);
+
+        ResizeAnimatedFramesIfNeeded(newSize);
+    }
+
+    private void ResizeAnimatedFramesIfNeeded(SKSizeI newSize)
+    {
+        if (_isAnimatedImage && _layersStack.Count > 0)
+        {
+            var resizedFrames = new List<SKBitmap>(_layersStack.Count);
+            foreach (var frame in _layersStack)
+            {
+                var r = frame.Resize(newSize, SKFilterQuality.High);
+                resizedFrames.Add(r);
+            }
+            foreach (var f in _layersStack) f.Dispose();
+            _layersStack = resizedFrames;
+        }
+    }
     private void SizeSliderOnValueChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         if (_inChange) return;
@@ -526,13 +562,10 @@ public partial class MainWindow : Window
 
     private void PercentageNumberOnTextChanged(object? sender, TextChangingEventArgs e)
     {
-        if (PercentageNumber.Text == null) return;
         if (_inChange) return;
         var numberText = _numberRegex.Replace(PercentageNumber.Text, "");
         PercentageNumber.Text = numberText + "%";
         e.Handled = true;
-
-        if (numberText.Length < 1) return;
         var setNumber = int.Parse(numberText);
         if (setNumber < 1) return;
         if (setNumber > 500)
@@ -541,7 +574,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ResizeImage(_rawBitmap.Width * setNumber / 100, _rawBitmap.Height * setNumber / 100);
+    ResizeImage(_rawBitmap.Width * (double)setNumber / 100, _rawBitmap.Height * (double)setNumber / 100);
 
         _inChange = true;
         WidthInput.Text = _displayedBitmap.Size.Width.ToString();
@@ -563,24 +596,26 @@ public partial class MainWindow : Window
         _inChange = true;
         double ratio = (double)_rawBitmap.Width / _rawBitmap.Height; // STUPID STUPID STUPID!!!
 
-        int _heightNumber =  int.Parse(_numberRegex.Replace(HeightInput.Text, ""));
-        int _widthNumber = (bool)UnlockAspectRatioCheckBox.IsChecked! ? int.Parse(WidthInput.Text) : (int)(_heightNumber * ratio);
+    int heightVal =  int.Parse(_numberRegex.Replace(HeightInput.Text, ""));
+    int widthVal = (bool)UnlockAspectRatioCheckBox.IsChecked! ? int.Parse(WidthInput.Text) : (int)(heightVal * ratio);
 
-        if(_widthNumber > 4096)
+        if(widthVal > 4096)
         {
-            _heightNumber = (int)(4096 / ratio);
-            _widthNumber = 4096;
+            heightVal = (int)(4096 / ratio);
+            widthVal = 4096;
         }
         
-        _widthNumber = Math.Max(Math.Min(_widthNumber, 4096), 1);
-        _heightNumber = Math.Max(Math.Min(_heightNumber, 4096), 1);
+        widthVal = Math.Max(Math.Min(widthVal, 4096), 1);
+        heightVal = Math.Max(Math.Min(heightVal, 4096), 1);
         
-        if (UnlockAspectRatioCheckBox.IsChecked ?? false) ResizeImage(int.Parse(WidthInput.Text), _heightNumber);
-        else ResizeImage(_widthNumber, _heightNumber);
+        if (UnlockAspectRatioCheckBox.IsChecked ?? false) ResizeImage(int.Parse(WidthInput.Text), heightVal);
+        else ResizeImage(widthVal, heightVal);
 
-        PercentageNumber.Text = $"{Math.Round((decimal)_heightNumber / _rawBitmap.Height * 100)}%";
-        WidthInput.Text = _widthNumber.ToString();
-        HeightInput.Text = _heightNumber.ToString();
+        PercentageNumber.Text = $"{Math.Round((decimal)heightVal / _rawBitmap.Height * 100)}%";
+        WidthInput.Text = widthVal.ToString();
+        HeightInput.Text = heightVal.ToString();
+        _inChange = false;
+        HeightInput.Text = heightVal.ToString();
         _inChange = false;
     }
 
@@ -598,54 +633,75 @@ public partial class MainWindow : Window
         _inChange = true;
         double ratio = (double)_rawBitmap.Height / _rawBitmap.Width; // STUPID STUPID STUPID!!!
 
-        int _widthNumber = int.Parse(_numberRegex.Replace(WidthInput.Text, ""));
-        int _heightNumber = (bool)UnlockAspectRatioCheckBox.IsChecked! ? int.Parse(HeightInput.Text) : (int)(_widthNumber * ratio);
-        Utils.Log(_heightNumber);
+        int widthVal2 = int.Parse(_numberRegex.Replace(WidthInput.Text, ""));
+        int heightVal2 = (bool)UnlockAspectRatioCheckBox.IsChecked! ? int.Parse(HeightInput.Text) : (int)(widthVal2 * ratio);
+        Utils.Log(heightVal2);
         Utils.Log(ratio);
 
-        if(_heightNumber > 4096)
+        if(heightVal2 > 4096)
         {
-            _widthNumber = (int)(4096 / ratio);
-            _heightNumber = 4096;
+            widthVal2 = (int)(4096 / ratio);
+            heightVal2 = 4096;
         }
         
-        _widthNumber = Math.Max(Math.Min(_widthNumber, 4096), 1);
-        _heightNumber = Math.Max(Math.Min(_heightNumber, 4096), 1);
+        widthVal2 = Math.Max(Math.Min(widthVal2, 4096), 1);
+        heightVal2 = Math.Max(Math.Min(heightVal2, 4096), 1);
 
-        if (UnlockAspectRatioCheckBox.IsChecked ?? false) ResizeImage(_widthNumber, int.Parse(HeightInput.Text));
-        else ResizeImage(_widthNumber, _heightNumber);
+        if (UnlockAspectRatioCheckBox.IsChecked ?? false) ResizeImage(widthVal2, int.Parse(HeightInput.Text));
+        else ResizeImage(widthVal2, heightVal2);
 
-        PercentageNumber.Text = $"{Math.Round((decimal)_widthNumber / _rawBitmap.Width * 100)}%";
-        WidthInput.Text = _widthNumber.ToString();
-        HeightInput.Text = _heightNumber.ToString();
+        PercentageNumber.Text = $"{Math.Round((decimal)widthVal2 / _rawBitmap.Width * 100)}%";
+        WidthInput.Text = widthVal2.ToString();
+        HeightInput.Text = heightVal2.ToString();
         _inChange = false;
+    }
+    private void WidthLockOnClick(object? sender, RoutedEventArgs e)
+    {
+        WidthLockValue = WidthLockValue > 0 ? 0 : WidthNumber;
+        WidthLockImage.Classes.Clear();
+        WidthLockImage.Classes.Add(WidthLockValue > 0 ? "LockedIcon" : "UnlockedIcon");
     }
 
     private void HeightLockOnClick(object? sender, RoutedEventArgs e)
     {
-        heightLock = heightLock > 0 ? 0 : heightNumber;
+    HeightLockValue = HeightLockValue > 0 ? 0 : HeightNumber;
         HeightLockImage.Classes.Clear();
-        HeightLockImage.Classes.Add(heightLock > 0 ? "LockedIcon" : "UnlockedIcon");
+        HeightLockImage.Classes.Add(HeightLockValue > 0 ? "LockedIcon" : "UnlockedIcon");
+    }
+    
+    private static void DrawIntervalOnTextChanging(object? sender, TextChangingEventArgs e)
+    {
+        var source = sender as TextBox;
+        if (source == null) return;
+
+        CleanTextBoxInput(source);
+
+        SetDrawingInterval(source.Text);
     }
 
-    private void WidthLockOnClick(object? sender, RoutedEventArgs e)
+    private static void CleanTextBoxInput(TextBox source)
     {
-        widthLock = widthLock > 0 ? 0 : widthNumber;
-        WidthLockImage.Classes.Clear();
-        WidthLockImage.Classes.Add(widthLock > 0 ? "LockedIcon" : "UnlockedIcon");
+        source.Text = MyRegex().Replace(source.Text, "");
     }
 
-
-    private void DrawIntervalOnTextChanging(object? sender, TextChangingEventArgs e)
+    private static void SetDrawingInterval(string text)
     {
-        HandleTextChange(e);
-        Drawing.Interval = int.TryParse(DrawIntervalElement.Text, out var interval) ? interval : 10000;
+        if (int.TryParse(text, out var interval))
+        {
+            Drawing.Interval = interval;
+        }
+        else
+        {
+            Drawing.Interval = 10000;
+        }
     }
 
-    private void ClickDelayOnTextChanging(object? sender, TextChangingEventArgs e)
+    private static void ClickDelayOnTextChanging(object? sender, TextChangingEventArgs e)
     {
-        HandleTextChange(e);
-        Drawing.ClickDelay = int.TryParse(ClickDelayElement.Text, out var clickDelay) ? clickDelay : 1000;
+        var source = sender as TextBox;
+        if (source == null) return;
+        source.Text = MyRegex().Replace(source.Text, "");
+        Drawing.ClickDelay = int.TryParse(source.Text, out var clickDelay) ? clickDelay : 1000;
     }
 
     private void minBlackThresholdElementOnTextChanging(object? sender, TextChangingEventArgs e)
@@ -666,9 +722,12 @@ public partial class MainWindow : Window
         _alphaThresh = int.TryParse(AlphaThresholdElement.Text, out var alpha) ? alpha : 127;
     }
 
-    private void FreeDrawCheckboxOnClick(object? sender, RoutedEventArgs e)
+    private static void FreeDrawCheckboxOnClick(object? sender, RoutedEventArgs e)
     {
-        Drawing.FreeDraw2 = FreeDrawCheckbox.IsChecked ?? false;
+        if (sender is CheckBox checkBox)
+        {
+            Drawing.FreeDraw2 = checkBox.IsChecked ?? false;
+        }
     }
 
     // Toolbar Handles
@@ -678,7 +737,7 @@ public partial class MainWindow : Window
         WindowState = WindowState.Minimized;
     }
 
-    public async void PasteControl()
+    public async Task PasteControl()
     {
         var clipboard = Clipboard;
         async void writeDump()
@@ -724,31 +783,32 @@ public partial class MainWindow : Window
         RefreshConfigList(this, null);
     }
 
-    public void LoadConfig(string? path)
+    public static void LoadConfig(string? path)
     {
-        // TODO: use the warning box (Not implemented yet) system to make it return a "This config does not exist!"
         if (!path.EndsWith(".drawcfg")) return;
+        if (!File.Exists(path))
+        {
+            new MessageBox().ShowMessageBox("Warning!", "This config does not exist!", "warning");
+            return;
+        }
         var lines = File.ReadAllLines(path);
-        SelectedConfigLabel.Content =
+
+        // Access MainWindow.CurrentMainWindow to get instance members
+        var mainWindow = MainWindow.CurrentMainWindow;
+        if (mainWindow == null) return;
+
+        mainWindow.SelectedConfigLabel.Content =
             $"{Properties.Resources.ConfigSelected} - {Path.GetFileNameWithoutExtension(path)}";
 
-        DrawIntervalElement.Text = lines.Length > 0 ? lines[0] : "10000";
+        mainWindow.DrawIntervalElement.Text = lines.Length > 0 ? lines[0] : "10000";
 
-        ClickDelayElement.Text = lines.Length > 1 ? lines[1] : "1000";
-
-        //maxBlackThresholdElement.Text = lines.Length > 2 ? lines[2] : "127";
-        //AlphaThresholdElement.Text = lines.Length > 3 ? lines[3] : "200";
+        mainWindow.ClickDelayElement.Text = lines.Length > 1 ? lines[1] : "1000";
         // Silly!!
 
         if (lines.Length <= 4) return;
         if (!bool.TryParse(lines[4], out var _fd2)) return;
-        FreeDrawCheckbox.IsChecked = _fd2;
+        mainWindow.FreeDrawCheckbox.IsChecked = _fd2;
         Drawing.FreeDraw2 = _fd2;
-
-        if (lines.Length <= 5) return;
-        //if (!int.TryParse(lines[5], out var _path)) return;
-
-        //minBlackThresholdElement.Text = lines.Length > 6 ? lines[6] : "0";
     }
 
     public async void SaveConfigViaDialog(object? sender, RoutedEventArgs e)
@@ -791,22 +851,28 @@ public partial class MainWindow : Window
         if (file.Count == 1) LoadConfig(file[0].TryGetLocalPath());
     }
 
-    public void RefreshConfigList(object? sender, RoutedEventArgs? e)
+    public static void RefreshConfigList(object? sender, RoutedEventArgs? e)
     {
         var configFolder = Config.GetEntry("ConfigFolder");
         if (configFolder == null) return;
         if (!Directory.Exists(configFolder)) return;
         var files = Directory.GetFiles(configFolder, "*.drawcfg");
         var fileNames = files.Select(f => Path.GetFileNameWithoutExtension(f)).ToArray();
-        ConfigsListBox.ClearValue(ItemsControl.ItemsSourceProperty);
-        ConfigsListBox.Items.Clear();
-        ConfigsListBox.ItemsSource = fileNames;
+
+        var mainWindow = MainWindow.CurrentMainWindow;
+        if (mainWindow == null) return;
+
+        mainWindow.ConfigsListBox.ClearValue(ItemsControl.ItemsSourceProperty);
+        mainWindow.ConfigsListBox.Items.Clear();
+        mainWindow.ConfigsListBox.ItemsSource = fileNames;
     }
 
-    public void LoadSelectedConfig(object? sender, RoutedEventArgs e)
+    public static void LoadSelectedConfig(object? sender, RoutedEventArgs e)
     {
-        if (ConfigsListBox.SelectedItem == null) return;
-        var selectedItem = ConfigsListBox.SelectedItem.ToString();
+        var mainWindow = MainWindow.CurrentMainWindow;
+        if (mainWindow == null) return;
+        if (mainWindow.ConfigsListBox.SelectedItem == null) return;
+        var selectedItem = mainWindow.ConfigsListBox.SelectedItem.ToString();
         if (selectedItem == null) return;
         LoadConfig($"{Path.Combine(Config.GetEntry("ConfigFolder"), selectedItem)}.drawcfg");
     }
@@ -814,10 +880,18 @@ public partial class MainWindow : Window
     // Actions
     ActionPrompt _actionPrompt = new();
     
-    public void ClickActionObject(InputAction Action)
+    public static void ClickActionObject(InputAction Action)
     {
-        // TODO: add action prompt stuff lol
-        Console.WriteLine("Yellow");
+        // Show the action prompt window for the selected action
+        var mainWindow = MainWindow.CurrentMainWindow;
+        if (mainWindow == null) return;
+
+        if (!mainWindow._actionPrompt.IsActive)
+            mainWindow._actionPrompt = new ActionPrompt();
+
+        mainWindow._actionPrompt.Action = Action;
+        mainWindow._actionPrompt.Show();
+        mainWindow._actionPrompt.Callback = mainWindow._addActionCallback;
     }
 
     public void AddAction()
@@ -860,8 +934,9 @@ public partial class MainWindow : Window
             else if (action.Action == InputAction.ActionType.WriteString) _ActionType = "Write String";
             else if (action.Action == InputAction.ActionType.MoveTo) _ActionType = "Move to";
             
+            string positionText = action.Position.HasValue ? $" @ x={action.Position.Value.X}, y={action.Position.Value.Y}" : "";
             var _ActionData = action.Data is null
-                ? (action.Position.HasValue ? $" @ x={action.Position.Value.X}, y={action.Position.Value.Y}" : "")
+                ? positionText
                 : $" - {action.Data}";
             
             var actionDisp = new ActionDisp

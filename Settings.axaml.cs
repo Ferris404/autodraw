@@ -11,6 +11,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
+using Avalonia.Controls.Primitives;
 using AvaloniaEdit;
 using AvaloniaEdit.TextMate;
 using Newtonsoft.Json;
@@ -34,11 +35,22 @@ public partial class Settings : Window
     private bool _textmateLoaded;
     private bool _currentlyAwaitingKeypress;
 
+    private const string WaitingText = "Waiting...";
+    private const string ErrorTitle = "Error!";
+    private const string AuthorKey = "author";
+    private const string IdKey = "id";
+    private const string NameKey = "name";
+    private const string DescriptionKey = "description";
+    private const string UsernameKey = "username";
+    private const string TitleKey = "title";
+    private const string DescKey = "desc";
+    private const string ImageKey = "image";
+
     public Settings()
     {
         InitializeComponent();
         
-        LoadLocalThemeItems();
+        Settings.LoadLocalThemeItems(this);
         
         // Main Handle
         CloseAppButton.Click += CloseAppButton_Click;
@@ -61,9 +73,8 @@ public partial class Settings : Window
         ChangeKeybind_StartDrawing.Click += async (sender, args) =>
         {
             if (_currentlyAwaitingKeypress) return;
-            ChangeKeybind_StartDrawing.Content = "Waiting...";
+            ChangeKeybind_StartDrawing.Content = WaitingText;
             var keybind = await ChangeKeybind_OnClick();
-            Config.Keybind_StartDrawing = keybind;
             Config.SetEntry("Keybind_StartDrawing", keybind.ToString());
             ChangeKeybind_StartDrawing.Content = Config.Keybind_StartDrawing;
         };
@@ -72,9 +83,8 @@ public partial class Settings : Window
         ChangeKeybind_StopDrawing.Click += async (sender, args) =>
         {
             if (_currentlyAwaitingKeypress) return;
-            ChangeKeybind_StopDrawing.Content = "Waiting...";
+            ChangeKeybind_StopDrawing.Content = WaitingText;
             var keybind = await ChangeKeybind_OnClick();
-            Config.Keybind_StopDrawing = keybind;
             Config.SetEntry("Keybind_StopDrawing", keybind.ToString());
             ChangeKeybind_StopDrawing.Content = Config.Keybind_StopDrawing;
         };
@@ -83,9 +93,8 @@ public partial class Settings : Window
         ChangeKeybind_PauseDrawing.Click += async (sender, args) =>
         {
             if (_currentlyAwaitingKeypress) return;
-            ChangeKeybind_PauseDrawing.Content = "Waiting...";
+            ChangeKeybind_PauseDrawing.Content = WaitingText;
             var keybind = await ChangeKeybind_OnClick();
-            Config.Keybind_PauseDrawing = keybind;
             Config.SetEntry("Keybind_PauseDrawing", keybind.ToString());
             ChangeKeybind_PauseDrawing.Content = Config.Keybind_PauseDrawing;
         };
@@ -94,20 +103,18 @@ public partial class Settings : Window
         ChangeKeybind_LockPreview.Click += async (sender, args) =>
         {
             if (_currentlyAwaitingKeypress) return;
-            ChangeKeybind_LockPreview.Content = "Waiting...";
+            ChangeKeybind_LockPreview.Content = WaitingText;
             var keybind = await ChangeKeybind_OnClick();
-            Config.Keybind_LockPreview = keybind;
             Config.SetEntry("Keybind_LockPreview", keybind.ToString());
             ChangeKeybind_LockPreview.Content = Config.Keybind_LockPreview;
         };
         
-        ChangeKeybind_SkipBacktrace.Content = Config.Keybind_SkipRescan;
+    ChangeKeybind_SkipBacktrace.Content = Config.Keybind_SkipRescan;
         ChangeKeybind_SkipBacktrace.Click += async (sender, args) =>
         {
             if (_currentlyAwaitingKeypress) return;
-            ChangeKeybind_SkipBacktrace.Content = "Waiting...";
+            ChangeKeybind_SkipBacktrace.Content = WaitingText;
             var keybind = await ChangeKeybind_OnClick();
-            Config.Keybind_SkipRescan = keybind;
             Config.SetEntry("Keybind_SkipRescan", keybind.ToString());
             ChangeKeybind_SkipBacktrace.Content = Config.Keybind_SkipRescan;
         };
@@ -141,17 +148,16 @@ public partial class Settings : Window
         ImageCacheLocationClearButton.Click += ImageCacheLocationClearButtonOnClick;
     }
 
-    private void MarketplaceTabsOnPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    private async void MarketplaceTabsOnPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
         if (e.Property.ToString() != "SelectedIndex") return;
         if (MarketplaceTabs.SelectedIndex == 0)
         {
-            LoadLocalThemeItems();
+            LoadLocalThemeItems(this);
         }
-
-        if (MarketplaceTabs.SelectedIndex == 1)
+        else if (MarketplaceTabs.SelectedIndex == 1)
         {
-            LoadOnlineThemeItems();
+            await LoadOnlineThemeItems(this);
         }
     }
     
@@ -160,8 +166,8 @@ public partial class Settings : Window
         if (e.Property.ToString() != "SelectedItem") return;
         TreeViewItem select = (TreeViewItem)SettingsTabs.SelectedItem;
         string? selectionName = select.Name;
-        if (selectionName == "" || selectionName is null || selectionName == " ") return;
-        string selectionTabName = Regex.Replace(selectionName, "Selector$","")+"Tab";
+        if (string.IsNullOrWhiteSpace(selectionName)) return;
+        string selectionTabName = MyRegex().Replace(selectionName, "") + "Tab";
         var selectionTab = this.FindControl<Grid>(selectionTabName);
         if (selectionTab is null) return;
         selectionTab.Opacity = 1;
@@ -173,45 +179,41 @@ public partial class Settings : Window
         }
         
         // Marketplace Loading Stuff:
-        if (selectionName == "MarketplaceSelector")
+    if (selectionName == "MarketplaceSelector")
         {
             if (MarketplaceTabs.SelectedIndex == 0)
             {
-                LoadLocalThemeItems();
+                LoadLocalThemeItems(this);
             }
-
-            if (MarketplaceTabs.SelectedIndex == 1)
+            else if (MarketplaceTabs.SelectedIndex == 1)
             {
-                LoadOnlineThemeItems();
+                _ = LoadOnlineThemeItems(this);
             }
         }
         
         // Theme Editor Loading Stuff:
-        if (selectionName == "ThemeEditorSelector")
+    if (selectionName == "ThemeEditorSelector" && !_textmateLoaded)
         {
             // Moved this here for performance reasons :P
 
-            if (!_textmateLoaded)
-            {
-                //  TextEditor Input
-                var _textEditor1 = this.FindControl<TextEditor>("ThemeInput");
-                var _registryOptions1 = new RegistryOptions(ThemeName.DarkPlus);
-                var _textMateInstallation1 = _textEditor1.InstallTextMate(_registryOptions1);
-                _textMateInstallation1.SetGrammar(
-                    _registryOptions1.GetScopeByLanguageId(_registryOptions1.GetLanguageByExtension(".xml").Id));
+            //  TextEditor Input
+            var _textEditor1 = this.FindControl<TextEditor>("ThemeInput");
+            var _registryOptions1 = new RegistryOptions(ThemeName.DarkPlus);
+            var _textMateInstallation1 = _textEditor1.InstallTextMate(_registryOptions1);
+            _textMateInstallation1.SetGrammar(
+                _registryOptions1.GetScopeByLanguageId(_registryOptions1.GetLanguageByExtension(".xml").Id));
 
-                //  TextEditor Output
-                var _textEditor2 = this.FindControl<TextEditor>("ThemeOutput");
-                var _registryOptions2 = new RegistryOptions(ThemeName.DarkPlus);
-                var _textMateInstallation2 = _textEditor2.InstallTextMate(_registryOptions2);
-                _textMateInstallation2.SetGrammar(
-                    _registryOptions2.GetScopeByLanguageId(_registryOptions2.GetLanguageByExtension(".md").Id));
-            
-                _textmateLoaded = true;
-            }
+            //  TextEditor Output
+            var _textEditor2 = this.FindControl<TextEditor>("ThemeOutput");
+            var _registryOptions2 = new RegistryOptions(ThemeName.DarkPlus);
+            var _textMateInstallation2 = _textEditor2.InstallTextMate(_registryOptions2);
+            _textMateInstallation2.SetGrammar(
+                _registryOptions2.GetScopeByLanguageId(_registryOptions2.GetLanguageByExtension(".md").Id));
+        
+            _textmateLoaded = true;
         }
 
-        currentlyViewing = selectionTab;
+    currentlyViewing = selectionTab;
     }
 
     private Task<KeyCode> ChangeKeybind_OnClick()
@@ -220,12 +222,12 @@ public partial class Settings : Window
 
         var tcs = new TaskCompletionSource<KeyCode>();
 
-        void handler(object? sender, KeyboardHookEventArgs e)
+    void handler(object? sender, KeyboardHookEventArgs e)
         {
             Input.taskHook.KeyPressed -= handler;
             _currentlyAwaitingKeypress = false;
             tcs.SetResult(e.Data.KeyCode);
-        };
+    }
     
         Input.taskHook.KeyPressed += handler;
 
@@ -234,7 +236,7 @@ public partial class Settings : Window
 
     // Image Cache
 
-    private void ImageCacheLocationClearButtonOnClick(object? sender, RoutedEventArgs e)
+    private static void ImageCacheLocationClearButtonOnClick(object? sender, RoutedEventArgs e)
     {
         string[] cachedImages = Directory.GetFiles(Config.CachePath, "*.jpeg", SearchOption.AllDirectories);
         foreach (string cachedImage in cachedImages)
@@ -245,7 +247,7 @@ public partial class Settings : Window
             }
             catch (UnauthorizedAccessException)
             {
-                new MessageBox().ShowMessageBox("Error!",
+                new MessageBox().ShowMessageBox(ErrorTitle,
                     "Appears the location provided may be a protected folder. Unable to clear cache automatically.");
                 break;
             }
@@ -257,24 +259,35 @@ public partial class Settings : Window
         }
     }
 
-    private void ImageCacheLocationSaveButtonOnClick(object? sender, RoutedEventArgs e)
+    private static void ImageCacheLocationSaveButtonOnClick(object? sender, RoutedEventArgs e)
     {
-        if (ImageCacheLocationTextBox.Text == Config.CachePath) return;
-        if (Directory.Exists(ImageCacheLocationTextBox.Text) is false)
+        // Cast sender to TextBox if possible, otherwise use Config.CachePath
+        var textBox = sender as TextBox;
+        string cachePath = textBox != null ? textBox.Text : Config.CachePath;
+
+        if (cachePath == Config.CachePath) return;
+        if (!Directory.Exists(cachePath))
         {
-            new MessageBox().ShowMessageBox("Error!", "Please provide a valid location!");
+            new MessageBox().ShowMessageBox(ErrorTitle, "Please provide a valid location!");
             return;
         }
-        if (Directory.GetFiles(ImageCacheLocationTextBox.Text,"*",SearchOption.AllDirectories).Length != 0)
+        if (Directory.GetFiles(cachePath, "*", SearchOption.AllDirectories).Length != 0)
         {
             // Already KNOW someone's going to put the Cache location in somewhere unsafe like C:/ or System32.
-            new MessageBox().ShowMessageBox("Error!", "Please ensure the folder is empty!");
+            new MessageBox().ShowMessageBox(ErrorTitle, "Please ensure the folder is empty!");
             return;
         }
 
-        Config.CachePath = Path.GetFullPath(ImageCacheLocationTextBox.Text);
+        UpdateCachePath(cachePath);
+
+        if (textBox != null)
+            textBox.Text = Config.CachePath;
+    }
+
+    private static void UpdateCachePath(string path)
+    {
+        Config.CachePath = Path.GetFullPath(path);
         Config.SetEntry("SavedCachePath", Config.CachePath);
-        ImageCacheLocationTextBox.Text = Config.CachePath;
     }
 
     private async void ImageCacheLocationFolderButtonOnClick(object? sender, RoutedEventArgs e)
@@ -286,17 +299,28 @@ public partial class Settings : Window
     
     // Themes Location
 
-    private void ThemesLocationSaveButtonOnClick(object? sender, RoutedEventArgs e)
+    private static void ThemesLocationSaveButtonOnClick(object? sender, RoutedEventArgs e)
     {
-        if (Directory.Exists(ThemesLocationTextBox.Text) is false)
+        // Cast sender to TextBox if possible, otherwise use Config.ThemesPath
+        var textBox = sender as TextBox;
+        string themesPath = textBox != null ? textBox.Text : Config.ThemesPath;
+
+        if (!Directory.Exists(themesPath))
         {
-            new MessageBox().ShowMessageBox("Error!", "Please provide a valid location!");
+            new MessageBox().ShowMessageBox(ErrorTitle, "Please provide a valid location!");
             return;
         }
 
-        Config.ThemesPath = Path.GetFullPath(ThemesLocationTextBox.Text);
+        UpdateThemesPath(themesPath);
+
+        if (textBox != null)
+            textBox.Text = Config.ThemesPath;
+    }
+
+    private static void UpdateThemesPath(string path)
+    {
+        Config.ThemesPath = Path.GetFullPath(path);
         Config.SetEntry("SavedThemesPath", Config.ThemesPath);
-        ThemesLocationTextBox.Text = Config.ThemesPath;
     }
 
     private async void ThemesLocationFolderButtonOnClick(object? sender, RoutedEventArgs e)
@@ -315,62 +339,63 @@ public partial class Settings : Window
 
     private Grid? currentlyViewing;
     
-    public class listedTheme
+    public class ListedTheme
     {
-        public string Title { get; set; }
-        public string Author { get; set; }
-        public string Description { get; set; }
-        public string Image { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Author { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Image { get; set; } = string.Empty;
         
-        public string ButtonParameter { get; set; }
+        public string ButtonParameter { get; set; } = string.Empty;
     }
 
-    public async void LoadOnlineTheme(object? data, RoutedEventArgs routedEventArgs)
+    public static async void LoadOnlineTheme(object? data, RoutedEventArgs routedEventArgs)
     {
         // This is such a stupid way of doing this but I really am out of ideas :P
         string rawJsonData = (string)((Button)data).CommandParameter;
         JObject JsonData = JObject.Parse(rawJsonData);
-        string FileLocation = await Marketplace.Download(Convert.ToInt32(JsonData.GetValue("id").ToString()));
+        string FileLocation = await Marketplace.Download(Convert.ToInt32(JsonData.GetValue(IdKey).ToString()));
         string fileName = Path.GetFileNameWithoutExtension(FileLocation);
-        File.WriteAllText(Path.Combine(Config.ThemesPath, fileName + "-Data.json"),rawJsonData);
+        await File.WriteAllTextAsync(Path.Combine(Config.ThemesPath, fileName + "-Data.json"), rawJsonData);
     }
 
-    private async void LoadOnlineThemeItems()
+    private static async Task LoadOnlineThemeItems(Settings instance)
     {
-        MarketplacePleaseWait.Opacity = 1;
-        OnlineThemes.Items.Clear();
+        instance.MarketplacePleaseWait.Opacity = 1;
+        instance.OnlineThemes.Items.Clear();
         var MarketplaceList = await Marketplace.List("theme");
-        MarketplacePleaseWait.Opacity = 0;
-        foreach (JObject themeData in MarketplaceList)
+        instance.MarketplacePleaseWait.Opacity = 0;
+        foreach (var token in MarketplaceList)
         {
-            string title = (string)themeData.GetValue("name") ?? "Title";
-            string description = (string)themeData.GetValue("description")  ?? "";
-            string image = $"https://auto-draw.com/ugc/{themeData.GetValue("author")}/{themeData.GetValue("id")}.png";
-            string author = (string)themeData.GetValue("username") ?? "Unknown";
+            if (token is not JObject themeData) continue;
+            string title = (string)themeData.GetValue(NameKey) ?? "Title";
+            string description = (string)themeData.GetValue(DescriptionKey)  ?? string.Empty;
+            string image = $"https://auto-draw.com/ugc/{themeData.GetValue(AuthorKey)}/{themeData.GetValue(IdKey)}.png";
+            string author = (string)themeData.GetValue(UsernameKey) ?? "Unknown";
             
             var data = new Dictionary<string, string>()
             {
-                { "title", title },
-                { "desc", description },
-                { "image", image },
-                { "author", author },
-                { "id", themeData.GetValue("id").ToString() }
+                { TitleKey, title },
+                { DescKey, description },
+                { ImageKey, image },
+                { AuthorKey, author },
+                { IdKey, themeData.GetValue(IdKey).ToString() }
             };
 
             string json = JsonConvert.SerializeObject(data);
             
-            listedTheme listData = new listedTheme();
+            ListedTheme listData = new ListedTheme();
             listData.Title = title;
             listData.Description = description;
             listData.Image = image;
             listData.Author = "Theme by "+author;
             listData.ButtonParameter = json ?? "";
-            OnlineThemes.Items.Add(listData);
+            instance.OnlineThemes.Items.Add(listData);
             
         }
     }
 
-    public void LoadLocalTheme(object? data, RoutedEventArgs routedEventArgs)
+    public static void LoadLocalTheme(object? data, RoutedEventArgs routedEventArgs)
     {
         // This is such a stupid way of doing this but I really am out of ideas :P
         string location = (string)((Button)data).CommandParameter;
@@ -378,57 +403,80 @@ public partial class Settings : Window
         
     }
     
-    private void LoadLocalThemeItems()
+    private static void LoadLocalThemeItems(Settings instance)
     {
-        InstalledThemes.Items.Clear();
+        instance.InstalledThemes.Items.Clear();
         string[] extensions = { ".axaml", ".laxaml", ".daxaml" };
-        string[] dirFiles = Directory.GetFiles(Config.ThemesPath,"*",SearchOption.AllDirectories);
+        string[] dirFiles = Directory.GetFiles(Config.ThemesPath, "*", SearchOption.AllDirectories);
         var themes = dirFiles.Where(file =>
             extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase));
         foreach (string theme in themes)
         {
-            string fileName = Path.GetFileName(theme);
-            string title = fileName;
-            string description = "";
-            string image = "";
-            string author = "Theme is Locally Stored";
-
-            string parent = Directory.GetParent(theme).FullName;
-
-            if (File.Exists(Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Image.jpeg")))
-            {
-                image = Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Image.jpeg");
-            }
-            if (File.Exists(Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Data.json")))
-            {
-                string rawJsonData = File.ReadAllText(Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Data.json"));
-                JObject JsonData = JObject.Parse(rawJsonData);
-                if (JsonData.ContainsKey("title"))
-                {
-                    title = (string)JsonData.GetValue("title");
-                }
-                if (JsonData.ContainsKey("desc"))
-                {
-                    description = (string)JsonData.GetValue("desc");
-                }
-                if (JsonData.ContainsKey("author"))
-                {
-                    author = (string)JsonData.GetValue("author");
-                }
-                if (JsonData.ContainsKey("image"))
-                {
-                    image = (string)JsonData.GetValue("image");
-                }
-            }
-                    
-            listedTheme listData = new listedTheme();
-            listData.Title = title;
-            listData.Description = description;
-            listData.Image = image;
-            listData.Author = author;
-            listData.ButtonParameter = Path.GetFullPath(theme);
-            InstalledThemes.Items.Add(listData);
+            ListedTheme listData = CreateListedTheme(theme);
+            instance.InstalledThemes.Items.Add(listData);
         }
+    }
+
+    private static ListedTheme CreateListedTheme(string theme)
+    {
+        string fileName = Path.GetFileName(theme);
+        string title = fileName;
+        string description = "";
+        string image = "";
+        string author = "Theme is Locally Stored";
+
+        string parent = Directory.GetParent(theme).FullName;
+
+        image = GetThemeImage(parent, theme);
+        (title, description, author, image) = GetThemeMetadata(parent, theme, title, description, author, image);
+
+        return new ListedTheme
+        {
+            Title = title,
+            Description = description,
+            Image = image,
+            Author = author,
+            ButtonParameter = Path.GetFullPath(theme)
+        };
+    }
+
+    private static string GetThemeImage(string parent, string theme)
+    {
+        string imagePath = Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Image.jpeg");
+        return File.Exists(imagePath) ? imagePath : "";
+    }
+
+    private static (string title, string description, string author, string image) GetThemeMetadata(
+        string parent, string theme, string title, string description, string author, string image)
+    {
+        string dataPath = Path.Combine(parent, Path.GetFileNameWithoutExtension(theme) + "-Data.json");
+        if (File.Exists(dataPath))
+        {
+            string rawJsonData = File.ReadAllText(dataPath);
+            JObject JsonData = JObject.Parse(rawJsonData);
+            if (JsonData.ContainsKey(TitleKey))
+            {
+                title = (string)JsonData.GetValue(TitleKey);
+            }
+            if (JsonData.ContainsKey(DescKey))
+            {
+                description = (string)JsonData.GetValue(DescKey);
+            }
+            if (JsonData.ContainsKey(AuthorKey))
+            {
+                author = (string)JsonData.GetValue(AuthorKey);
+            }
+            if (JsonData.ContainsKey(ImageKey))
+            {
+                image = (string)JsonData.GetValue(ImageKey);
+            }
+        }
+        return (
+            title ?? string.Empty,
+            description ?? string.Empty,
+            author ?? string.Empty,
+            image ?? string.Empty
+        );
     }
 
     private void LoadTheme_Click(object? sender, RoutedEventArgs e)
@@ -437,20 +485,7 @@ public partial class Settings : Window
         ThemeOutput.Text = Output;
     }
 
-    private void ListThemes()
-    {
-        string[] extensions = { ".axaml", ".laxaml", ".daxaml" };
-        string[] dirFiles = Directory.GetFiles(Config.FolderPath + "/Themes");
-        var files = dirFiles.Where(file =>
-            extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase));
-
-        foreach (var file in files)
-        {
-            // Make your code to list it, however you do it
-            // Name is 'Path.GetFileNameWithoutExtension(file)'
-            // Path is 'file'
-        }
-    }
+    // Removed unused ListThemes method (S1144)
 
     private async void OpenTheme_Click(object? sender, RoutedEventArgs e)
     {
@@ -464,10 +499,9 @@ public partial class Settings : Window
 
         if (file.Count == 1)
         {
-            var fileType = Regex.Match(file[0].TryGetLocalPath(), "\\.[^.\\\\/:*?\"<>|\\r\\n]+$").Value;
-            var stream = await file[0].OpenReadAsync();
-            ThemeInput.Text = new StreamReader(stream).ReadToEnd();
-            stream.Close();
+            await using var stream = await file[0].OpenReadAsync();
+            using var reader = new StreamReader(stream);
+            ThemeInput.Text = await reader.ReadToEndAsync();
             _savedLocation = file[0].TryGetLocalPath();
         }
     }
@@ -485,55 +519,59 @@ public partial class Settings : Window
         {
             await using var stream = await file.OpenWriteAsync();
             using var streamWriter = new StreamWriter(stream);
-
-            streamWriter.Write(ThemeInput.Text);
+            await streamWriter.WriteAsync(ThemeInput.Text);
             _savedLocation = file.TryGetLocalPath(); // set to saved file location
         }
     }
 
     private async void NewTheme_Click(object? sender, RoutedEventArgs e)
     {
-        var themeText = await new StreamReader(AssetLoader.Open(new Uri("avares://Autodraw/Styles/DefaultTheme.txt")))
+        var lightThemeTextUri = new UriBuilder("avares", typeof(App).Assembly.GetName().Name ?? string.Empty, -1, "Styles/DefaultTheme.txt").Uri;
+        var themeText = await new StreamReader(AssetLoader.Open(lightThemeTextUri))
             .ReadToEndAsync();
         ThemeInput.Text = themeText;
         _savedLocation = "";
     }
 
-    private void ToggleTheme_Click(object? sender, RoutedEventArgs e)
+    private static void ToggleTheme_Click(object? sender, RoutedEventArgs e)
     {
-        if (App.CurrentTheme == "avares://Autodraw/Styles/dark.axaml")
-            App.LoadTheme("avares://Autodraw/Styles/light.axaml", false);
+        var darkUri = new UriBuilder("avares", typeof(App).Assembly.GetName().Name ?? string.Empty, -1, "Styles/dark.axaml").Uri.ToString();
+        var lightUri = new UriBuilder("avares", typeof(App).Assembly.GetName().Name ?? string.Empty, -1, "Styles/light.axaml").Uri.ToString();
+        if (App.CurrentTheme == darkUri)
+            App.LoadTheme(lightUri, false);
         else
-            App.LoadTheme("avares://Autodraw/Styles/dark.axaml");
+            App.LoadTheme(darkUri);
     }
     
-    private void ShowPopup_IsCheckedChanged(object? sender, RoutedEventArgs e)
+    private static void ShowPopup_IsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        if (ShowPopup.IsChecked == null) return;
-        Drawing.ShowPopup = (bool)ShowPopup.IsChecked;
-        Config.SetEntry("showPopup", ShowPopup.IsChecked.ToString() ?? "true");
+        if (sender is not ToggleButton tb || tb.IsChecked is null) return;
+        var value = tb.IsChecked.Value;
+        Drawing.ShowPopup = value;
+        Config.SetEntry("showPopup", value.ToString());
     }
 
-    private void AltMouseControl_IsCheckedChanged(object? sender, RoutedEventArgs e)
+    private static void AltMouseControl_IsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        if (AltMouseControl.IsChecked == null) return;
-        Input.forceUio = (bool)AltMouseControl.IsChecked;
+        if (sender is not ToggleButton tb || tb.IsChecked is null) return;
+        Input.forceUio = tb.IsChecked.Value;
     }
 
-    private void NoRescanOnIsCheckedChanged(object? sender, RoutedEventArgs e)
+    private static void NoRescanOnIsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        if (NoRescan.IsChecked == null) return;
-        Drawing.NoRescan = (bool)NoRescan.IsChecked;
+        if (sender is not ToggleButton tb || tb.IsChecked is null) return;
+        Drawing.NoRescan = tb.IsChecked.Value;
     }
 
-    private void LogFile_IsCheckedChanged(object? sender, RoutedEventArgs e)
+    private static void LogFile_IsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        if (LogFile.IsChecked == null) return;
-        Config.SetEntry("logsEnabled", LogFile.IsChecked.ToString() ?? "True");
-        Utils.LoggingEnabled = (bool)LogFile.IsChecked;
+        if (sender is not ToggleButton tb || tb.IsChecked is null) return;
+        var value = tb.IsChecked.Value;
+        Config.SetEntry("logsEnabled", value.ToString());
+        Utils.LoggingEnabled = value;
     }
 
-    private void LocalThemeOnClick(object? sender, RoutedEventArgs e)
+    private static void LocalThemeOnClick(object? sender, RoutedEventArgs e)
     {
         throw new NotImplementedException();
     }
@@ -545,4 +583,6 @@ public partial class Settings : Window
             BeginMoveDrag(e);
     }
 
+    [GeneratedRegex("Selector$")]
+    private static partial Regex MyRegex();
 }
