@@ -52,9 +52,12 @@ public partial class ActionPrompt : Window, INotifyPropertyChanged
     public InputAction? Action { get; set; }
     private object? _rawActionData;
 
-    private void CloseAppButton_Click(object? sender, RoutedEventArgs e)
+    private static void CloseAppButton_Click(object? sender, RoutedEventArgs e)
     {
-        Close();
+        if (sender is Window window)
+        {
+            window.Close();
+        }
     }
 
     private bool isTracking = false;
@@ -184,8 +187,8 @@ public partial class ActionPrompt : Window, INotifyPropertyChanged
         Callback(); // Alien Cat: "Hello? Mothership, can you beam me up?"
     }
 
-    public void Cancel()
+    public static void Cancel(ActionPrompt window)
     {
-        Close();
+        window.Close();
     }
 }
