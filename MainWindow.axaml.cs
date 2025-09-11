@@ -56,6 +56,7 @@ public partial class MainWindow : Window
     private SKBitmap? _processedBitmap;
 
     private SKBitmap? _rawBitmap = new(318, 318, true);
+    private bool _isAnimatedImage = false;
 
     private Settings? _settings;
 
@@ -263,9 +264,46 @@ public partial class MainWindow : Window
 
     public void ImportImage(string? path, byte[]? img = null)
     {
-        _rawBitmap = img is null ? SKBitmap.Decode(path).NormalizeColor() : SKBitmap.Decode(img).NormalizeColor();
-        _preFxBitmap = _rawBitmap.Copy();
-        _displayedBitmap = _rawBitmap.NormalizeColor().ConvertToAvaloniaBitmap();
+        if (_layersStack.Count > 0)
+        {
+            foreach (var f in _layersStack) f.Dispose();
+            _layersStack.Clear();
+        }
+        _isAnimatedImage = false;
+
+        if (img is null && !string.IsNullOrWhiteSpace(path) && path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var frames = DecodeGifFrames(path);
+                if (frames.Count > 0)
+                {
+                    _layersStack = frames;
+                    _rawBitmap = frames[0].Copy();
+                    _preFxBitmap = _rawBitmap.Copy();
+                    _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+                    _isAnimatedImage = true;
+                }
+                else
+                {
+                    _rawBitmap = SKBitmap.Decode(path).NormalizeColor();
+                    _preFxBitmap = _rawBitmap.Copy();
+                    _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+                }
+            }
+            catch
+            {
+                _rawBitmap = SKBitmap.Decode(path).NormalizeColor();
+                _preFxBitmap = _rawBitmap.Copy();
+                _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+            }
+        }
+        else
+        {
+            _rawBitmap = img is null ? SKBitmap.Decode(path).NormalizeColor() : SKBitmap.Decode(img).NormalizeColor();
+            _preFxBitmap = _rawBitmap.Copy();
+            _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+        }
         _processedBitmap?.Dispose();
         _processedBitmap = null;
         ImagePreview.Image = _displayedBitmap;
@@ -279,6 +317,43 @@ public partial class MainWindow : Window
         _inChange = false;
         
         if (widthLock > 0 || heightLock > 0) ResizeImage(_displayedBitmap.Size.Width, _displayedBitmap.Size.Height);
+    }
+
+    private static List<SKBitmap> DecodeGifFrames(string gifPath)
+    {
+        var frames = new List<SKBitmap>();
+        try
+        {
+            using var stream = File.OpenRead(gifPath);
+            using var codec = SKCodec.Create(stream);
+            if (codec == null || codec.FrameCount <= 1)
+            {
+                return frames;
+            }
+            var srcInfo = codec.Info;
+            var outInfo = new SKImageInfo(srcInfo.Width, srcInfo.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            var frameInfos = codec.FrameInfo;
+            for (int i = 0; i < codec.FrameCount; i++)
+            {
+                var bmp = new SKBitmap(outInfo);
+                int prior = frameInfos != null && i < frameInfos.Length ? frameInfos[i].RequiredFrame : -1;
+                var opts = prior >= 0 ? new SKCodecOptions(i, prior) : new SKCodecOptions(i);
+                var result = codec.GetPixels(outInfo, bmp.GetPixels(), opts);
+                if (result == SKCodecResult.Success || result == SKCodecResult.IncompleteInput)
+                {
+                    frames.Add(bmp);
+                }
+                else
+                {
+                    bmp.Dispose();
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return frames;
     }
 
     private async void OpenButtonOnClick(object? sender, RoutedEventArgs e)
@@ -295,7 +370,9 @@ public partial class MainWindow : Window
 
     private void RunButtonOnClick(object? sender, RoutedEventArgs e)
     {
-        if (_processedBitmap == null)
+    // Capture current filter settings
+    GetSelectFilters();
+        if (_processedBitmap == null && !_isAnimatedImage && _layersStack.Count == 0)
         {
             new MessageBox().ShowMessageBox("Error!", "Please select and process an image beforehand.", "error");
             return;
@@ -312,8 +389,16 @@ public partial class MainWindow : Window
         if (Drawing.IsDrawing) return;
         Drawing.ChosenAlgorithm = (byte)AlgorithmSelection.SelectedIndex;
 
-        new Preview().ReadyDraw(_processedBitmap);
-        new Preview().ReadyStackDraw(_preFxBitmap, _layersStack, _actionStack);
+        if (_isAnimatedImage && _layersStack.Count > 0)
+        {
+            var pv = new Preview();
+            pv.ReadyStackDraw(_preFxBitmap, _layersStack, _actionStack);
+        }
+        else
+        {
+            var pv = new Preview();
+            pv.ReadyDraw(_processedBitmap);
+        }
         WindowState = WindowState.Minimized;
     }
 
@@ -337,6 +422,12 @@ public partial class MainWindow : Window
 
     private void ImageClearImageOnClick(object? sender, RoutedEventArgs e)
     {
+        if (_layersStack.Count > 0)
+        {
+            foreach (var f in _layersStack) f.Dispose();
+            _layersStack.Clear();
+        }
+        _isAnimatedImage = false;
         _rawBitmap = new SKBitmap(318, 318, true);
         _preFxBitmap = new SKBitmap(318, 318, true);
         _processedBitmap = null;
@@ -368,17 +459,32 @@ public partial class MainWindow : Window
 
         if (_processedBitmap == null)
         {
-            var resizedBitmap = _rawBitmap.Resize(new SKSizeI((int)width, (int)height), SKFilterQuality.High);
+            var newSize = new SKSizeI((int)width, (int)height);
+            var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
             _preFxBitmap.Dispose();
             _preFxBitmap = resizedBitmap;
             _displayedBitmap?.Dispose();
             _displayedBitmap = resizedBitmap.ConvertToAvaloniaBitmap();
             ImagePreview.Image = _displayedBitmap;
             GC.AddMemoryPressure(resizedBitmap.ByteCount);
+
+            // If an animated image is loaded, resize all frames to keep stack consistent
+            if (_isAnimatedImage && _layersStack.Count > 0)
+            {
+                var resizedFrames = new List<SKBitmap>(_layersStack.Count);
+                foreach (var frame in _layersStack)
+                {
+                    var r = frame.Resize(newSize, SKFilterQuality.High);
+                    resizedFrames.Add(r);
+                }
+                foreach (var f in _layersStack) f.Dispose();
+                _layersStack = resizedFrames;
+            }
         }
         else if (_processedBitmap != null)
         {
-            var resizedBitmap = _rawBitmap.Resize(new SKSizeI((int)width, (int)height), SKFilterQuality.High);
+            var newSize = new SKSizeI((int)width, (int)height);
+            var resizedBitmap = _rawBitmap.Resize(newSize, SKFilterQuality.High);
             _preFxBitmap.Dispose();
             _preFxBitmap = resizedBitmap;
             var postProcessBitmap = ImageProcessing.Process(resizedBitmap, GetSelectFilters());
@@ -388,6 +494,18 @@ public partial class MainWindow : Window
             _displayedBitmap = postProcessBitmap.ConvertToAvaloniaBitmap();
             ImagePreview.Image = _displayedBitmap;
             GC.AddMemoryPressure(resizedBitmap.ByteCount);
+
+            if (_isAnimatedImage && _layersStack.Count > 0)
+            {
+                var resizedFrames = new List<SKBitmap>(_layersStack.Count);
+                foreach (var frame in _layersStack)
+                {
+                    var r = frame.Resize(newSize, SKFilterQuality.High);
+                    resizedFrames.Add(r);
+                }
+                foreach (var f in _layersStack) f.Dispose();
+                _layersStack = resizedFrames;
+            }
         }
     }
 
@@ -742,7 +860,9 @@ public partial class MainWindow : Window
             else if (action.Action == InputAction.ActionType.WriteString) _ActionType = "Write String";
             else if (action.Action == InputAction.ActionType.MoveTo) _ActionType = "Move to";
             
-            var _ActionData = action.Data is null ? $" @ x={action.Position.Value.X}, y={action.Position.Value.Y}" : $" - {action.Data}";
+            var _ActionData = action.Data is null
+                ? (action.Position.HasValue ? $" @ x={action.Position.Value.X}, y={action.Position.Value.Y}" : "")
+                : $" - {action.Data}";
             
             var actionDisp = new ActionDisp
             { 
