@@ -18,11 +18,15 @@ namespace Autodraw;
 
 public partial class OpenAIPrompt : Window
 {
-    public static OpenAIPrompt? current;
+    public static OpenAIPrompt? Current { get; private set; }
+    private const string ErrorSeverity = "error";
+    private const string WarnSeverity = "warn";
+    private const string ErrorKey = "error";
     
     public OpenAIPrompt()
     {
         InitializeComponent();
+        Current = this;
 
         if (Config.GetEntry("OpenAIKey") is null)
         {
@@ -77,11 +81,12 @@ public partial class OpenAIPrompt : Window
         var OpenAIKey = Config.GetEntry("OpenAIKey");
         if (OpenAIKey is null)
         {
-            new MessageBox().ShowMessageBox("Error!", "You have not set up an API key!", "error");
+            new MessageBox().ShowMessageBox("Error!", "You have not set up an API key!", ErrorSeverity);
             return;
         }
 
-        var options = new RestClientOptions("https://api.openai.com/v1/images/generations")
+        var endpoint = Config.GetEntry("OpenAIEndpoint") ?? "https://api.openai.com/v1/images/generations";
+        var options = new RestClientOptions(endpoint)
         {
             Authenticator = new OAuth2AuthorizationRequestHeaderAuthenticator(OpenAIKey, "Bearer")
         };
@@ -117,12 +122,12 @@ public partial class OpenAIPrompt : Window
                 request.AddJsonBody(param);
 
                 var jsonResponse = JObject.Parse(client.Execute(request).Content);
-                if (jsonResponse["error"] is not null)
+                if (jsonResponse[ErrorKey] is not null)
                 {
                     Dispatcher.UIThread.Invoke(() =>
                     {
-                        new MessageBox().ShowMessageBox($"Error! ({jsonResponse["error"]["type"]})",
-                            jsonResponse["error"]["message"].ToString(), "warn");
+                        new MessageBox().ShowMessageBox($"Error! ({jsonResponse[ErrorKey]["type"]})",
+                            jsonResponse[ErrorKey]["message"].ToString(), WarnSeverity);
                         Generate.IsEnabled = true;
                         Generate.Content = "Generate";
                     });

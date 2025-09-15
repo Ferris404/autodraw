@@ -64,7 +64,7 @@ public partial class Settings : Window
         LogFile.IsCheckedChanged += LogFile_IsCheckedChanged;
 
         ShowPopup.IsChecked = Drawing.ShowPopup;
-        AltMouseControl.IsChecked = Input.forceUio;
+    AltMouseControl.IsChecked = Input.ForceUio;
         NoRescan.IsChecked = Drawing.NoRescan;
         LogFile.IsChecked = Config.GetEntry("logsEnabled") == "True";
         
@@ -554,7 +554,7 @@ public partial class Settings : Window
     private static void AltMouseControl_IsCheckedChanged(object? sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton tb || tb.IsChecked is null) return;
-        Input.forceUio = tb.IsChecked.Value;
+    Input.ForceUio = tb.IsChecked.Value;
     }
 
     private static void NoRescanOnIsCheckedChanged(object? sender, RoutedEventArgs e)

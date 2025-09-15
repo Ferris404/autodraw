@@ -5,13 +5,10 @@ using Avalonia;
 using Avalonia.Controls;
 using SharpHook;
 using SharpHook.Native;
-#if WINDOWS
-using SimWinInput;
-#endif
 
 namespace Autodraw;
 
-public class Input
+public static class Input
 {
     //// Variables
 
@@ -19,112 +16,78 @@ public class Input
     private static readonly EventSimulator eventSim = new();
 
     // Public
-    public static TaskPoolGlobalHook taskHook = new();
-    public static Vector2 mousePos;
-    public static bool forceUio = false;
+    private static readonly TaskPoolGlobalHook _taskHook = new();
+    private static Vector2 _mousePos;
+    public static bool ForceUio { get; set; } = false;
     public static event EventHandler? MousePosUpdate;
-    public static PixelPoint primaryScreenBounds;
+    public static PixelPoint PrimaryScreenBounds { get; private set; }
+
+    public static TaskPoolGlobalHook taskHook => _taskHook;
+    public static Vector2 mousePos { get => _mousePos; private set => _mousePos = value; }
 
     //// Functions
 
     // Core
 
-    private static bool isUio()
-    {
-        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        return !isWindows || forceUio;
-    }
+    // Removed unused isUio()
 
     public static void Start()
     {
-        if (taskHook.IsRunning) return;
-        if (taskHook.IsDisposed) return; // Avalonia Preview Fix.
-        primaryScreenBounds = MainWindow.CurrentMainWindow.Screens.Primary.Bounds.TopLeft; // updates if main screen orientation changes
+        if (_taskHook.IsRunning) return;
+        if (_taskHook.IsDisposed) return; // Avalonia Preview Fix.
+        PrimaryScreenBounds = MainWindow.CurrentMainWindow.Screens.Primary.Bounds.TopLeft; // updates if main screen orientation changes
 
-        taskHook.MouseMoved += (sender, e) =>
+        _taskHook.MouseMoved += (sender, e) =>
         {
             mousePos = new Vector2(e.Data.X, e.Data.Y);
             
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) // || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                mousePos = new Vector2(mousePos.X + primaryScreenBounds.X, mousePos.Y + primaryScreenBounds.Y);
+                mousePos = new Vector2(mousePos.X + PrimaryScreenBounds.X, mousePos.Y + PrimaryScreenBounds.Y);
             MousePosUpdate?.Invoke(null, EventArgs.Empty);
         };
 
-        taskHook.RunAsync();
+        _taskHook.RunAsync();
     }
 
     public static void Stop()
     {
         // Never really need to call this UNLESS, we are closing the software.
-        taskHook.Dispose();
+        _taskHook.Dispose();
     }
 
     // Movement
 
     public static void MoveTo(short x, short y)
     {
-#if WINDOWS
-            SimMouse.Act(SimMouse.Action.MoveOnly, x, y);
-            mousePos = new Vector2(x, y);
-#else
-            eventSim.SimulateMouseMovement(x, y);
-#endif
+        eventSim.SimulateMouseMovement(x, y);
+        mousePos = new Vector2(x, y);
     }
 
     public static void MoveBy(short xOffset, short yOffset)
     {
-#if WINDOWS
-        SimMouse.Act(SimMouse.Action.MoveOnly, xOffset + (short)mousePos.X, yOffset + (short)mousePos.Y);
-        mousePos = new Vector2(xOffset + (short)mousePos.X, yOffset + (short)mousePos.Y);
-#else
         eventSim.SimulateMouseMovementRelative(xOffset, yOffset);
-#endif
+        mousePos = new Vector2(xOffset + (short)mousePos.X, yOffset + (short)mousePos.Y);
     }
 
     // Click Handling
 
     public static void SendClick(byte mouseType)
     {
-#if WINDOWS
-        var buttonDown = mouseType == MouseTypes.MouseLeft
-            ? SimMouse.Action.LeftButtonDown
-            : SimMouse.Action.RightButtonDown;
-        var buttonUp = mouseType == MouseTypes.MouseLeft
-            ? SimMouse.Action.LeftButtonUp
-            : SimMouse.Action.RightButtonUp;
-        SimMouse.Act(buttonDown, (int)mousePos.X, (int)mousePos.Y);
-        SimMouse.Act(buttonUp, (int)mousePos.X, (int)mousePos.Y);
-#else
         var button = mouseType == MouseTypes.MouseLeft ? MouseButton.Button1 : MouseButton.Button2;
         eventSim.SimulateMousePress(button);
         eventSim.SimulateMouseRelease(button);
-#endif
     }
 
     public static void SendClickDown(byte mouseType)
     {
-#if WINDOWS
-        var buttonDown = mouseType == MouseTypes.MouseLeft
-            ? SimMouse.Action.LeftButtonDown
-            : SimMouse.Action.RightButtonDown;
-        SimMouse.Act(buttonDown, (int)mousePos.X, (int)mousePos.Y);
-#else
         var button = mouseType == MouseTypes.MouseLeft ? MouseButton.Button1 : MouseButton.Button2;
         eventSim.SimulateMousePress(button);
-#endif
     }
 
     public static void SendClickUp(byte mouseType)
     {
-#if WINDOWS
-        var buttonUp = mouseType == MouseTypes.MouseLeft
-            ? SimMouse.Action.LeftButtonUp
-            : SimMouse.Action.RightButtonUp;
-        SimMouse.Act(buttonUp, (int)mousePos.X, (int)mousePos.Y);
-#else
         var button = mouseType == MouseTypes.MouseLeft ? MouseButton.Button1 : MouseButton.Button2;
         eventSim.SimulateMouseRelease(button);
-#endif
     }
 
     public static void SendKeyDown(KeyCode keyCode)
@@ -142,7 +105,7 @@ public class Input
 
     public static class MouseTypes
     {
-        public static byte MouseLeft = 1;
-        public static byte MouseRight = 2;
+        public const byte MouseLeft = 1;
+        public const byte MouseRight = 2;
     }
 }

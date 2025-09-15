@@ -12,6 +12,7 @@ using Avalonia.Threading;
 using SharpHook;
 using SharpHook.Native;
 using SkiaSharp;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Autodraw;
 
@@ -64,17 +65,20 @@ public class InputAction
     {
         switch (Action)
         {
-            //TODO LATER: Add Speed and Delay functions to actions
+            // Consider adding speed and delay support in actions in the future.
             case ActionType.MoveTo:
+                if (!Position.HasValue) return;
                 Input.MoveTo((short)Position.Value.X, (short)Position.Value.Y);
                 break;
 
             case ActionType.LeftClick:
+                if (!Position.HasValue) return;
                 Input.MoveTo((short)Position.Value.X, (short)Position.Value.Y);
                 Input.SendClick(Input.MouseTypes.MouseLeft);
                 break;
 
             case ActionType.RightClick:
+                if (!Position.HasValue) return;
                 Input.MoveTo((short)Position.Value.X, (short)Position.Value.Y);
                 Input.SendClick(Input.MouseTypes.MouseRight);
                 break;
@@ -106,31 +110,29 @@ public static class Drawing
     
     // Variables
 
-    public static int Interval = 10000;
-    public static int ClickDelay = 1000; // Milliseconds, please multiply by 10000
+    private static int _interval = 10000;
+    private static int _clickDelay = 1000; // Milliseconds, please multiply by 10000
     
     /// <summary>
     ///  0 indicates DFS, 1 indicates Edge-Following
     /// </summary>
-    public static byte ChosenAlgorithm = 0;
-    
-    public static bool NoRescan = false;
-    public static bool IsDrawing;
-    public static bool SkipRescan;
-    public static bool IsPaused;
-    public static bool IsSkipping;
-    public static bool FreeDraw2 = false;
+    private static bool _isDrawing;
+    private static bool _skipRescan;
+    private static bool _isPaused;
 
-    public static Vector2 LastPos = Config.Preview_LastLockPos;
-
-    public static bool ShowPopup =
-        Config.GetEntry("showPopup") == null || bool.Parse(Config.GetEntry("showPopup") ?? "true");
+    public static int Interval { get => _interval; set => _interval = Math.Max(0, value); }
+    public static int ClickDelay { get => _clickDelay; set => _clickDelay = Math.Max(0, value); }
+    public static byte ChosenAlgorithm { get; set; } = 0;
+    public static bool NoRescan { get; set; }
+    public static bool IsDrawing { get => _isDrawing; private set => _isDrawing = value; }
+    public static bool SkipRescan { get => _skipRescan; private set => _skipRescan = value; }
+    public static bool IsPaused { get => _isPaused; private set => _isPaused = value; }
+    public static bool FreeDraw2 { get; set; }
+    public static Vector2 LastPos { get; set; } = Config.Preview_LastLockPos;
+    public static bool ShowPopup { get; set; } = Config.GetEntry("showPopup") == null || bool.Parse(Config.GetEntry("showPopup") ?? "true");
 
 
     private static DrawDataDisplay? _dataDisplay;
-
-    private static int _totalScanSize;
-    private static int _completeTotalScan;
 
     // Functions
 
@@ -145,22 +147,20 @@ public static class Drawing
 
     private static unsafe byte[,] Scan(SKBitmap bitmap)
     {
-        _totalScanSize = 0;
-        _completeTotalScan = 0;
         var _pixelArray = new byte[bitmap.Width, bitmap.Height];
         var bitPtr = (byte*)bitmap.GetPixels().ToPointer();
 
-
         for (var y = 0; y < bitmap.Height; y++)
-        for (var x = 0; x < bitmap.Width; x++)
         {
-            var redByte = *bitPtr++;
-            bitPtr++;
-            bitPtr++;
-            bitPtr++;
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var redByte = *bitPtr++;
+                bitPtr++;
+                bitPtr++;
+                bitPtr++;
 
-            _pixelArray[x, y] = redByte < 127 ? (byte)1 : (byte)0;
-            if (redByte < 127) _totalScanSize += 1;
+                _pixelArray[x, y] = redByte < 127 ? (byte)1 : (byte)0;
+            }
         }
 
         return _pixelArray;
@@ -171,6 +171,7 @@ public static class Drawing
         IsDrawing = false;
     }
 
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "Algorithmic exploration inherently complex")]
     private static List<Dictionary<Vector2, int>> GetChunks(SKBitmap srcBitmap)
     {
         List<List<byte>> data = new List<List<byte>>();
@@ -286,10 +287,9 @@ public static class Drawing
                 }
             }
         
-        chunks.Sort(delegate(Dictionary<Vector2, int> x, Dictionary<Vector2, int> y)
-        {
-            return y.Count.CompareTo(x.Count);
-        });
+        chunks = chunks
+            .OrderByDescending(d => d.Count)
+            .ToList();
         
         return chunks;
     }
@@ -313,19 +313,19 @@ public static class Drawing
         // Traverse each chunk
         foreach (Dictionary<Vector2, int> chunk in chunks)
         {
-            foreach (KeyValuePair<Vector2, int> startPoint in chunk)
+            foreach (Vector2 startKey in chunk.Keys)
             {
-                if (data[(int)startPoint.Key.X, (int)startPoint.Key.Y] != 1) continue;
+                if (data[(int)startKey.X, (int)startKey.Y] != 1) continue;
 
                 // Perform DFS to find connected components
-                actions.Add(ChosenFunction(startPoint.Key, data, relativeDirections,chunk));
+                actions.Add(ChosenFunction(startKey, data, relativeDirections));
             }
         }
 
         return actions;
     }
 
-    private static List<Vector2> ChosenFunction(Vector2 start, byte[,] data, Vector2[] relativeDirections, Dictionary<Vector2, int> chunk)
+    private static List<Vector2> ChosenFunction(Vector2 start, byte[,] data, Vector2[] relativeDirections)
     {
         if (ChosenAlgorithm == 0)
         {
@@ -397,14 +397,12 @@ public static class Drawing
             path.Add(currentPosition);
             previousPosition = currentPosition;
 
-            foreach (Vector2 direction in directions)
+            foreach (var neighbor in directions
+                         .Select(direction => currentPosition + direction)
+                         .Where(neighbor => IsValidMove(neighbor, data)))
             {
-                Vector2 neighbor = currentPosition + direction;
-                if (IsValidMove(neighbor, data))
-                {
-                    data[(int)neighbor.X, (int)neighbor.Y] = 2;
-                    stack.Push(neighbor);
-                }
+                data[(int)neighbor.X, (int)neighbor.Y] = 2;
+                stack.Push(neighbor);
             }
         }
 
@@ -413,16 +411,10 @@ public static class Drawing
 
     private static bool IsAdjacent(Vector2 position1, Vector2 position2, Vector2[] directions)
     {
-        foreach (Vector2 direction in directions)
-        {
-            if (position1 + direction == position2)
-            {
-                return true;
-            }
-        }
-        return false;
+        return directions.Any(direction => position1 + direction == position2);
     }
 
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "A* pathfinding complexity is expected")]
     private static List<Vector2> AStar(Vector2 start, Vector2 goal, byte[,] data)
     {
         PriorityQueue<Vector2, float> openSet = new();
@@ -481,10 +473,10 @@ public static class Drawing
     private static List<Vector2> ReconstructPath(Dictionary<Vector2, Vector2?> cameFrom, Vector2 current)
     {
         List<Vector2> path = new();
-        while (cameFrom.ContainsKey(current) && cameFrom[current].HasValue)
+        while (cameFrom.TryGetValue(current, out var prev) && prev.HasValue)
         {
             path.Add(current);
-            current = cameFrom[current].Value;
+            current = prev.Value;
         }
 
         path.Reverse();
@@ -534,20 +526,21 @@ public static class Drawing
                data[(int)position.X, (int)position.Y] == 1;
     }
 
-    private static bool StackHalted;
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "Event + IO orchestration")]
+    [SuppressMessage("Minor Code Smell", "S2589:Boolean expressions should not be gratuitous", Justification = "stackHalted is closure-updated by event")]
     public static async Task<bool> DrawStack(List<SKBitmap> stack, List<InputAction> actions, Vector2 position)
     {
-        StackHalted = false;
-        static void KeybindRelease(object? sender, KeyboardHookEventArgs e)
+        bool stackHalted = false;
+        void KeybindRelease(object? sender, KeyboardHookEventArgs e)
         {
-            if (e.Data.KeyCode == Config.Keybind_StopDrawing) { StackHalted = true; }
+            if (e.Data.KeyCode == Config.Keybind_StopDrawing) { stackHalted = true; }
         }
         Input.taskHook.KeyReleased += KeybindRelease;
 
         foreach (SKBitmap bitmap in stack)
         {
             List<InputAction> actionsCopy = new(actions.Select(act => new InputAction(act.Action, act.Data is not null ? act.Data : act.Position)));
-            if (StackHalted)
+            if (stackHalted)
             {
                 break;
             }
@@ -576,7 +569,7 @@ public static class Drawing
                 await NOP(1000000);
             }
             
-            if (StackHalted)
+            if (stackHalted)
             {
                 break;
             }
@@ -586,9 +579,11 @@ public static class Drawing
             await Draw(processedBitmap,position);
         }
 
+        Input.taskHook.KeyReleased -= KeybindRelease;
         return true;
     }
 
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "User interaction + UI updates")]
     public static async Task<bool> Draw(SKBitmap bitmap,Vector2 position)
     {
         if (IsDrawing) return false;
@@ -614,13 +609,14 @@ public static class Drawing
             if (e.Data.KeyCode == Config.Keybind_PauseDrawing) IsPaused = !IsPaused;
         }
 
+        // Capture local for event to update stackHalted (only used in DrawStack). Here we just wire handlers.
         Input.taskHook.KeyPressed += KeybindPress;
         Input.taskHook.KeyReleased += KeybindRelease;
 
         IsDrawing = true;
         var usedPos = position;
 
-        Dispatcher.UIThread.Invoke(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
             _dataDisplay = new DrawDataDisplay();
             _dataDisplay.Show();
@@ -637,15 +633,15 @@ public static class Drawing
 
         byte[,] dataArray = Scan(bitmap);
 
-        Dispatcher.UIThread.Invoke(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            _dataDisplay.DataDisplayText.Text =
+            _dataDisplay!.DataDisplayText.Text =
                 $"Getting Chunks...";
         });
         List<Dictionary<Vector2, int>> Chunks = GetChunks(bitmap);
-        Dispatcher.UIThread.Invoke(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            _dataDisplay.DataDisplayText.Text =
+            _dataDisplay!.DataDisplayText.Text =
                 $"Generating Action Path...";
         });
         List<List<Vector2>> Actions = GenerateActions(Chunks,dataArray);
@@ -653,7 +649,7 @@ public static class Drawing
         int ActionsComplete = 0;
         foreach (List<Vector2> Action in Actions)
         {
-            DateTime TimeStarted = DateTime.Now;
+            var sw = Stopwatch.StartNew();
             
             ActionsComplete++;
             bool isDown = false;
@@ -664,9 +660,9 @@ public static class Drawing
                 if (!IsDrawing) break;
                 short x = (short)(p.X + startPos.X);
                 short y = (short)(p.Y + startPos.Y);
-                Dispatcher.UIThread.Invoke(() => // Note, this may be slowing down the top-speed, need further testing.
+                await Dispatcher.UIThread.InvokeAsync(() => // Note, this may be slowing down the top-speed, need further testing.
                 {
-                    _dataDisplay.DataDisplayText.Text =
+                    _dataDisplay!.DataDisplayText.Text =
                         $"ActionSet Completed: {ActionComplete}/{Action.Count}\n" +
                         $"ActionSet's Remaining: {ActionsComplete}/{Actions.Count}";
                 });
@@ -718,15 +714,15 @@ public static class Drawing
                 await NOP(Interval);
             }
             Input.SendClickUp(Input.MouseTypes.MouseLeft);
-
-            var timeComp = (DateTime.Now - TimeStarted);
+            sw.Stop();
+            var timeCompMs = sw.Elapsed.TotalMilliseconds;
             
-            Utils.Log($"Time per Action: {timeComp.TotalMilliseconds/Action.Count}");
+            Utils.Log($"Time per Action: {timeCompMs/Action.Count}");
             Utils.Log($"Action Count: {Action.Count}");
             
             if (FreeDraw2)
             {
-                var timeLim = 1000 - timeComp.TotalMilliseconds;
+                var timeLim = 1000 - timeCompMs;
                 if (timeLim > 0)
                 {
                     Console.WriteLine(timeLim);
@@ -742,216 +738,16 @@ public static class Drawing
         Input.taskHook.KeyReleased -= KeybindRelease;
 
         IsDrawing = false;
-        Dispatcher.UIThread.Invoke(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            _dataDisplay.Close();
+            _dataDisplay!.Close();
             if (ShowPopup) new MessageBox().ShowMessageBox("Drawing Finished!", "The drawing has finished! Yippee!");
         });
         
         return true;
-        /*
-        for (var _y = 0; _y < bitmap.Height; _y++)
-        {
-            if (!IsDrawing) break;
-            var y = _y + startPos.Y;
-            for (var _x = 0; _x < bitmap.Width; _x++)
-            {
-                if (!IsDrawing) break;
-                if (_pixelArray[_x, _y] == 1)
-                {
-                    var x = _x + startPos.X;
-                    if (IsPaused)
-                    {
-                        Input.SendClickUp(Input.MouseTypes.MouseLeft);
-                        while (IsPaused) await NOP(500000);
-                        Input.MoveTo((short)x, (short)y);
-                        await NOP(500000);
-                        Input.SendClickDown(Input.MouseTypes.MouseLeft);
-                    }
-
-                    Input.MoveTo((short)x, (short)(y - 1));
-                    await NOP(ClickDelay * 5000);
-                    Input.MoveTo((short)x, (short)(y + 1));
-                    Input.SendClickDown(Input.MouseTypes.MouseLeft);
-                    await DrawArea(_x, _y, startPos, new Pos { X = bitmap.Width, Y = bitmap.Height });
-                    Input.SendClickUp(Input.MouseTypes.MouseLeft);
-                    await NOP(ClickDelay * 5000);
-                }
-            }
-        }
-
-        Input.taskHook.KeyPressed -= KeybindPress;
-        Input.taskHook.KeyReleased -= KeybindRelease;
-
-        IsDrawing = false;
-        ResetScan(new Pos { X = bitmap.Width, Y = bitmap.Height });
-        Dispatcher.UIThread.Invoke(() =>
-        {
-            _dataDisplay.Close();
-            if (ShowPopup) new MessageBox().ShowMessageBox("Drawing Finished!", "The drawing has finished! Yippee!");
-        });
-        return true;
-        */
     }
 
-    private static async Task<bool> DrawArea(int _x, int _y, Pos startPos, Pos size)
-    {
-        return false;
-        /*
-        SkipRescan = NoRescan;
-        ArrayList stack = new();
-
-        var distanceSinceLastClick = 0;
-        while (true)
-        {
-            if (!IsDrawing)
-            {
-                Dispatcher.UIThread.Invoke(() =>
-                {
-                    _dataDisplay.DataDisplayText.Text =
-                        $"Total Image Done: {_completeTotalScan}/{_totalScanSize}\nSearching...";
-                });
-                break;
-            }
-
-            var x = (short)(_x + startPos.X);
-            var y = (short)(_y + startPos.Y);
-
-            if (IsPaused)
-            {
-                Input.SendClickUp(Input.MouseTypes.MouseLeft);
-                while (IsPaused) await NOP(500000);
-                Input.MoveTo(x, y);
-                await NOP(500000);
-                Input.SendClickDown(Input.MouseTypes.MouseLeft);
-            }
-
-            var isPixel = _pixelArray[_x, _y] == 1;
-
-            if (!isPixel && !IsSkipping && SkipRescan) IsSkipping = true;
-
-            if ((IsSkipping && isPixel) || (IsSkipping && !SkipRescan))
-            {
-                IsSkipping = false;
-                Input.SendClickUp(Input.MouseTypes.MouseLeft);
-                await NOP(ClickDelay * 5000);
-                Input.MoveTo(x, y);
-                await NOP(ClickDelay * 5000);
-                Input.SendClickDown(Input.MouseTypes.MouseLeft);
-            }
-
-            // MOVE MOUSE
-            if (!IsSkipping)
-            {
-                Input.MoveTo(x, y);
-
-                distanceSinceLastClick++;
-                if (distanceSinceLastClick > 4000 && FreeDraw2)
-                {
-                    distanceSinceLastClick = 0;
-                    Input.SendClickUp(Input.MouseTypes.MouseLeft);
-                    await NOP(Interval * 3);
-                    Input.SendClickDown(Input.MouseTypes.MouseLeft);
-                }
-            }
-
-            if (isPixel) _completeTotalScan += 1;
-            _pixelArray[_x, _y] = 2;
-
-            Dispatcher.UIThread.Invoke(() =>
-            {
-                _dataDisplay.DataDisplayText.Text =
-                    $"Total Image Done: {_completeTotalScan}/{_totalScanSize}\nCurrent Stack Size: {stack.Count}";
-            });
-
-            if (!(IsSkipping && !isPixel)) await NOP(Interval);
-
-            if (!IsDrawing) break;
-
-            var cont = false;
-            foreach (var i in Enumerable.Range(0, 8))
-            {
-                switch (_path[i])
-                {
-                    case 1:
-                        if (_x <= 0 || _y <= 0) break;
-                        if (_pixelArray[_x - 1, _y - 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x -= 1;
-                        _y -= 1;
-                        cont = true;
-                        break;
-                    case 2:
-                        if (_y <= 0) break;
-                        if (_pixelArray[_x, _y - 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _y -= 1;
-                        cont = true;
-                        break;
-                    case 3:
-                        if (_x >= size.X - 1 || _y <= 0) break;
-                        if (_pixelArray[_x + 1, _y - 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x += 1;
-                        _y -= 1;
-                        cont = true;
-                        break;
-                    case 4:
-                        if (_x <= 0) break;
-                        if (_pixelArray[_x - 1, _y] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x -= 1;
-                        cont = true;
-                        break;
-                    case 5:
-                        if (_x >= size.X - 1) break;
-                        if (_pixelArray[_x + 1, _y] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x += 1;
-                        cont = true;
-                        break;
-                    case 6:
-                        if (_x <= 0 || _y >= size.Y - 1) break;
-                        if (_pixelArray[_x - 1, _y + 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x -= 1;
-                        _y += 1;
-                        cont = true;
-                        break;
-                    case 7:
-                        if (_y >= size.Y - 1) break;
-                        if (_pixelArray[_x, _y + 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _y += 1;
-                        cont = true;
-                        break;
-                    case 8:
-                        if (_y >= size.Y - 1 || _x >= size.X - 1) break;
-                        if (_pixelArray[_x + 1, _y + 1] != 1) break;
-                        stack.Add(new Pos { X = _x, Y = _y });
-                        _x += 1;
-                        _y += 1;
-                        cont = true;
-                        break;
-                }
-
-                if (cont) break;
-            }
-
-            if (cont) continue;
-            if (stack.Count < 1) break;
-            var backPos = (Pos)stack[^1];
-            _x = backPos.X;
-            _y = backPos.Y;
-
-            stack.Remove(backPos);
-        }
-
-        return true;
-        */
-    }
-
-    private class Pos
+    private sealed class Pos
     {
         public int X { get; set; }
         public int Y { get; set; }

@@ -21,12 +21,12 @@ namespace Autodraw;
 
 public partial class Preview : Window
 {
-    public bool hasStarted = false;
-    public SKBitmap? inputBitmap;
-    public long lastMovement;
-    public Bitmap? renderedBitmap;
-    private double scale = 1;
-    public PixelPoint primaryScreenBounds;
+    public bool HasStarted { get; private set; } = false;
+    public SKBitmap? InputBitmap { get; private set; }
+    public long LastMovement { get; }
+    public Bitmap? RenderedBitmap { get; private set; }
+    private readonly double scale;
+    public PixelPoint PrimaryScreenBounds { get; private set; }
     
     
     private bool drawingStack;
@@ -53,16 +53,17 @@ public partial class Preview : Window
         _isUpdatingPosition = false;
         Closing += OnClosing;
         
-        primaryScreenBounds = Screens.Primary.Bounds.TopLeft;
+        PrimaryScreenBounds = Screens.Primary.Bounds.TopLeft;
     }
 
     private void Control_OnLoaded(object? sender, RoutedEventArgs e)
     {
+        // Intentionally left blank: reserved for future loaded event logic
     }
 
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        renderedBitmap.Dispose();
+        RenderedBitmap?.Dispose();
         Closing -= OnClosing;
     }
 
@@ -70,7 +71,7 @@ public partial class Preview : Window
     {
         if (e.Data.KeyCode == Config.Keybind_StartDrawing)
         {
-            if (inputBitmap is null && !drawingStack) return;
+            if (InputBitmap is null && !drawingStack) return;
             Thread drawThread = new(async () =>
             {
                 if (drawingStack)
@@ -79,7 +80,7 @@ public partial class Preview : Window
                 }
                 else
                 {
-                    await Drawing.Draw(inputBitmap,Drawing.LastPos);
+                    await Drawing.Draw(InputBitmap,Drawing.LastPos);
                 }
             });
             drawThread.Start();
@@ -103,12 +104,13 @@ public partial class Preview : Window
         }
     }
 
+    // bitmap here is the processed first frame used only for previewing
     public void ReadyStackDraw(SKBitmap bitmap, List<SKBitmap> _stack, List<InputAction> _actions)
     {
         drawingStack = true;
-        renderedBitmap?.Dispose();
-        renderedBitmap = bitmap.ConvertToAvaloniaBitmap();
-        PreviewImage.Source = renderedBitmap;
+    RenderedBitmap?.Dispose();
+    RenderedBitmap = bitmap.ConvertToAvaloniaBitmap();
+    PreviewImage.Source = RenderedBitmap;
         
         Width = (bitmap.Width) / scale;
         Height = (bitmap.Height) / scale;
@@ -126,16 +128,16 @@ public partial class Preview : Window
     public void ReadyDraw(SKBitmap bitmap)
     {
         drawingStack = false;
-        renderedBitmap?.Dispose();
-        renderedBitmap = bitmap.ConvertToAvaloniaBitmap();
-        PreviewImage.Source = renderedBitmap;
+    RenderedBitmap?.Dispose();
+    RenderedBitmap = bitmap.ConvertToAvaloniaBitmap();
+    PreviewImage.Source = RenderedBitmap;
 
         Width = (bitmap.Width) / scale;
         Height = (bitmap.Height) / scale;
 
         Show();
 
-        inputBitmap = bitmap;
+    InputBitmap = bitmap;
         Input.taskHook.KeyReleased += Keybind;
     }
 
@@ -161,8 +163,8 @@ public partial class Preview : Window
         if (!isMoving) return;
         PointerPoint currentPoint = e.GetCurrentPoint(this);
         Position = new PixelPoint(
-            Position.X + (XLock.IsChecked == false ? (int)(currentPoint.Position.X - _originalPoint.Position.X) : 0),
-            Position.Y + (YLock.IsChecked == false ? (int)(currentPoint.Position.Y - _originalPoint.Position.Y) : 0)
+            Position.X + (!XLock.IsChecked.GetValueOrDefault() ? (int)(currentPoint.Position.X - _originalPoint.Position.X) : 0),
+            Position.Y + (!YLock.IsChecked.GetValueOrDefault() ? (int)(currentPoint.Position.Y - _originalPoint.Position.Y) : 0)
         );
         Drawing.LastPos = new Vector2(Position.X,Position.Y);
         _isUpdatingPosition = true;
@@ -211,16 +213,16 @@ public partial class Preview : Window
 
     private void XLock_OnIsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        XPos.IsEnabled = XLock.IsChecked == false;
+        this.XPos.IsEnabled = !this.XLock.IsChecked.GetValueOrDefault();
     }
 
     private void YLock_OnIsCheckedChanged(object? sender, RoutedEventArgs e)
     {
-        YPos.IsEnabled = YLock.IsChecked == false;
+        this.YPos.IsEnabled = !this.YLock.IsChecked.GetValueOrDefault();
     }
 
     private void Button_OnClick(object? sender, RoutedEventArgs e)
     {
-        EditPanel.IsVisible = !EditPanel.IsVisible;
+        this.EditPanel.IsVisible = !this.EditPanel.IsVisible;
     }
 }

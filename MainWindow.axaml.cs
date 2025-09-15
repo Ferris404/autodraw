@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     public ObservableCollection<ActionDisp> ActionsContext { get; set; } = new();
     private readonly List<InputAction> _actionStack = new();
     List<SKBitmap> _layersStack = new();
+    List<SKBitmap> _layersStackOriginal = new();
 
     private long _lastMem;
     private long _lastTime = DateTime.Now.ToFileTime();
@@ -60,6 +61,8 @@ public partial class MainWindow : Window
 
     private SKBitmap? _rawBitmap = new(318, 318, true);
     private bool _isAnimatedImage;
+    private int _gifStartFrameIndex = 0;
+    private bool _gifUiUpdating = false;
 
     private Settings? _settings;
 
@@ -102,10 +105,14 @@ public partial class MainWindow : Window
         OpenButton.Click += OpenButtonOnClick;
         ProcessButton.Click += ProcessButtonOnClick;
         RunButton.Click += RunButtonOnClick;
+    ExportFramesButton.Click += ExportFramesButtonOnClick;
 
         ImageAIGeneration.Click += ImageAIGenerationOnClick;
         ImageSaveImage.Click += ImageSaveImageOnClick;
         ImageClearImage.Click += ImageClearImageOnClick;
+    ApplyStartFrameButton.Click += ApplyStartFrameButtonOnClick;
+    GifStartFrameSlider.PropertyChanged += GifStartFrameSliderOnPropertyChanged;
+    GifStartFrameInput.TextChanging += GifStartFrameInputOnTextChanging;
 
         // Inputs
         SizeSlider.ValueChanged += SizeSliderOnValueChanged;
@@ -145,6 +152,104 @@ public partial class MainWindow : Window
         Input.Start();
     }
 
+    private void ApplyStartFrameButtonOnClick(object? sender, RoutedEventArgs e)
+    {
+        if (!_isAnimatedImage || _layersStackOriginal.Count == 0) return;
+        // Prefer explicit input if present and valid
+        int selected = (int)GifStartFrameSlider.Value;
+        if (int.TryParse(GifStartFrameInput.Text, out var parsed))
+        {
+            selected = Math.Clamp(parsed, 0, Math.Max(0, _layersStackOriginal.Count - 1));
+        }
+        _gifStartFrameIndex = selected;
+        RotateGifFramesToStart(_gifStartFrameIndex);
+        // Update preview to first (new) frame
+        _rawBitmap?.Dispose();
+        _preFxBitmap?.Dispose();
+        _rawBitmap = _layersStack[0].Copy();
+        _preFxBitmap = _rawBitmap.Copy();
+        _displayedBitmap?.Dispose();
+        _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+        ImagePreview.Image = _displayedBitmap;
+    }
+
+    private void GifStartFrameSliderOnPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property.Name != nameof(Slider.Value)) return;
+        if (_gifUiUpdating) return;
+        _gifUiUpdating = true;
+        GifStartFrameInput.Text = ((int)Math.Clamp(GifStartFrameSlider.Value, 0, _layersStackOriginal.Count > 0 ? _layersStackOriginal.Count - 1 : 0)).ToString();
+        _gifUiUpdating = false;
+    }
+
+    private void GifStartFrameInputOnTextChanging(object? sender, TextChangingEventArgs e)
+    {
+        if (_gifUiUpdating) return;
+        _gifUiUpdating = true;
+        // Keep only digits
+        var tb = sender as TextBox;
+        if (tb != null)
+        {
+            var digits = new string((tb.Text ?? string.Empty).Where(char.IsDigit).ToArray());
+            tb.Text = digits;
+            if (int.TryParse(digits, out var num) && _layersStackOriginal.Count > 0)
+            {
+                num = Math.Clamp(num, 0, _layersStackOriginal.Count - 1);
+                GifStartFrameSlider.Value = num;
+            }
+        }
+        _gifUiUpdating = false;
+    }
+
+    private void RotateGifFramesToStart(int startIndex)
+    {
+        if (_layersStackOriginal.Count == 0) return;
+        startIndex = Math.Clamp(startIndex, 0, _layersStackOriginal.Count - 1);
+        var newOrder = new List<SKBitmap>(_layersStackOriginal.Count);
+        for (int i = 0; i < _layersStackOriginal.Count; i++)
+        {
+            int idx = (startIndex + i) % _layersStackOriginal.Count;
+            newOrder.Add(_layersStackOriginal[idx]);
+        }
+        _layersStack = newOrder;
+    }
+
+    private async void ExportFramesButtonOnClick(object? sender, RoutedEventArgs e)
+    {
+        await ExportProcessedFramesAsync();
+    }
+
+    private async Task ExportProcessedFramesAsync()
+    {
+        if (_layersStack == null || _layersStack.Count == 0)
+        {
+            new MessageBox().ShowMessageBox("Error!", "No animated frames loaded.", "error");
+            return;
+        }
+
+        var folder = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Choose export folder",
+            AllowMultiple = false
+        });
+        if (folder.Count != 1) return;
+
+        string? targetDir = folder[0].TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(targetDir)) return;
+
+        var filters = GetSelectFilters();
+        int count = _layersStack.Count;
+        for (int i = 0; i < count; i++)
+        {
+            using var processed = ImageProcessing.Process(_layersStack[i], filters);
+            using var encoded = processed.Encode(SKEncodedImageFormat.Png, 100);
+            string path = Path.Combine(targetDir, $"frame_{i:D4}.png");
+            await File.WriteAllBytesAsync(path, encoded.ToArray());
+        }
+
+        new MessageBox().ShowMessageBox("Export complete", "Processed frames were saved.", "info");
+    }
+
     // User Configuration Handles
 
     //*
@@ -179,7 +284,6 @@ public partial class MainWindow : Window
         _devwindow?.Close();
         _settings?.Close();
         _aiPrompt?.Close();
-        if (Utils.LogObject != null) Utils.LogObject.Close();
         Input.Stop();
         Drawing.Halt();
     }
@@ -289,11 +393,16 @@ public partial class MainWindow : Window
 
     private void ClearLayersStack()
     {
-        if (_layersStack.Count > 0)
+        if (_layersStackOriginal.Count > 0)
+        {
+            foreach (var f in _layersStackOriginal) f.Dispose();
+            _layersStackOriginal.Clear();
+        }
+        else if (_layersStack.Count > 0)
         {
             foreach (var f in _layersStack) f.Dispose();
-            _layersStack.Clear();
         }
+        _layersStack.Clear();
         _isAnimatedImage = false;
     }
 
@@ -309,11 +418,22 @@ public partial class MainWindow : Window
             var frames = DecodeGifFrames(path);
             if (frames.Count > 0)
             {
-                _layersStack = frames;
-                _rawBitmap = frames[0].Copy();
+                _layersStackOriginal = frames;
+                _layersStack = new List<SKBitmap>(_layersStackOriginal);
+                _rawBitmap = _layersStack[0].Copy();
                 _preFxBitmap = _rawBitmap.Copy();
                 _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
                 _isAnimatedImage = true;
+
+                // Enable start frame controls
+                GifStartFrameSlider.IsEnabled = true;
+                ApplyStartFrameButton.IsEnabled = true;
+                GifStartFrameSlider.Maximum = Math.Max(0, _layersStackOriginal.Count - 1);
+                GifStartFrameSlider.Value = 0;
+                GifFrameInfoLabel.Text = $"Frames: {_layersStackOriginal.Count}";
+                GifStartFrameInput.IsEnabled = true;
+                GifStartFrameInput.Text = "0";
+                _gifStartFrameIndex = 0;
             }
             else
             {
@@ -331,6 +451,12 @@ public partial class MainWindow : Window
         _rawBitmap = img is null ? SKBitmap.Decode(path).NormalizeColor() : SKBitmap.Decode(img).NormalizeColor();
         _preFxBitmap = _rawBitmap.Copy();
         _displayedBitmap = _rawBitmap.ConvertToAvaloniaBitmap();
+    // Disable start frame controls for static images
+        GifStartFrameSlider.IsEnabled = false;
+        ApplyStartFrameButton.IsEnabled = false;
+        GifFrameInfoLabel.Text = "Frames: 0";
+        GifStartFrameInput.IsEnabled = false;
+        GifStartFrameInput.Text = "";
     }
 
     private void InitBitmapFromPath(string? path)
@@ -363,19 +489,40 @@ public partial class MainWindow : Window
             var srcInfo = codec.Info;
             var outInfo = new SKImageInfo(srcInfo.Width, srcInfo.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
             var frameInfos = codec.FrameInfo;
+
+            // Use a single accumulator and let codec use prior frame composition
+            using var accumulator = new SKBitmap(outInfo);
+            var white = new SKColor(255, 255, 255, 255);
+
             for (int i = 0; i < codec.FrameCount; i++)
             {
-                var bmp = new SKBitmap(outInfo);
-                int prior = frameInfos != null && i < frameInfos.Length ? frameInfos[i].RequiredFrame : -1;
-                var opts = prior >= 0 ? new SKCodecOptions(i, prior) : new SKCodecOptions(i);
-                var result = codec.GetPixels(outInfo, bmp.GetPixels(), opts);
+                SKBitmap? prevCopy = null;
+                var fi = frameInfos != null && i < frameInfos.Length ? frameInfos[i] : default;
+                if (fi.DisposalMethod == SKCodecAnimationDisposalMethod.RestorePrevious)
+                {
+                    prevCopy = accumulator.Copy();
+                }
+
+                if (i == 0)
+                {
+                    accumulator.Erase(white);
+                }
+
+                var opts = i == 0 ? new SKCodecOptions(i) : new SKCodecOptions(i, i - 1);
+                var result = codec.GetPixels(outInfo, accumulator.GetPixels(), opts);
                 if (result == SKCodecResult.Success || result == SKCodecResult.IncompleteInput)
                 {
-                    frames.Add(bmp);
-                }
-                else
-                {
-                    bmp.Dispose();
+                    // Store a copy of composed frame (opaque due to white base)
+                    frames.Add(accumulator.Copy());
+
+                    // Handle restore-previous disposal
+                    if (fi.DisposalMethod == SKCodecAnimationDisposalMethod.RestorePrevious && prevCopy != null)
+                    {
+                        accumulator.Erase(white);
+                        using var canvas = new SKCanvas(accumulator);
+                        canvas.DrawBitmap(prevCopy, SKPoint.Empty);
+                        prevCopy.Dispose();
+                    }
                 }
             }
         }
@@ -421,8 +568,12 @@ public partial class MainWindow : Window
 
         if (_isAnimatedImage && _layersStack.Count > 0)
         {
+            // Show processed first frame in the overlay for accurate preview
+            var firstFrame = _layersStack[0];
+            var processedFirst = ImageProcessing.Process(firstFrame, GetSelectFilters());
             var pv = new Preview();
-            pv.ReadyStackDraw(_preFxBitmap, _layersStack, _actionStack);
+            pv.ReadyStackDraw(processedFirst, _layersStack, _actionStack);
+            processedFirst.Dispose();
         }
         else
         {
@@ -452,7 +603,13 @@ public partial class MainWindow : Window
 
     private void ImageClearImageOnClick(object? sender, RoutedEventArgs e)
     {
-        if (_layersStack.Count > 0)
+        if (_layersStackOriginal.Count > 0)
+        {
+            foreach (var f in _layersStackOriginal) f.Dispose();
+            _layersStackOriginal.Clear();
+            _layersStack.Clear();
+        }
+        else if (_layersStack.Count > 0)
         {
             foreach (var f in _layersStack) f.Dispose();
             _layersStack.Clear();
@@ -533,16 +690,17 @@ public partial class MainWindow : Window
 
     private void ResizeAnimatedFramesIfNeeded(SKSizeI newSize)
     {
-        if (_isAnimatedImage && _layersStack.Count > 0)
+        if (_isAnimatedImage && _layersStackOriginal.Count > 0)
         {
-            var resizedFrames = new List<SKBitmap>(_layersStack.Count);
-            foreach (var frame in _layersStack)
+            var resizedOriginal = new List<SKBitmap>(_layersStackOriginal.Count);
+            foreach (var frame in _layersStackOriginal)
             {
                 var r = frame.Resize(newSize, SKFilterQuality.High);
-                resizedFrames.Add(r);
+                resizedOriginal.Add(r);
             }
-            foreach (var f in _layersStack) f.Dispose();
-            _layersStack = resizedFrames;
+            foreach (var f in _layersStackOriginal) f.Dispose();
+            _layersStackOriginal = resizedOriginal;
+            RotateGifFramesToStart(_gifStartFrameIndex);
         }
     }
     private void SizeSliderOnValueChanged(object? sender, RangeBaseValueChangedEventArgs e)

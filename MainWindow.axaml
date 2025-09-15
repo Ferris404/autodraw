@@ -333,7 +333,17 @@
                             </ScrollViewer>
                         </TabItem>
                         <TabItem Header="Layers">
-                            
+                            <Grid Margin="8" RowDefinitions="Auto,Auto" ColumnDefinitions="*,8,120,8,Auto">
+                                <StackPanel Grid.Row="0" Grid.ColumnSpan="5" Orientation="Vertical" Spacing="8">
+                                    <Label Content="GIF Start Frame" FontSize="14" HorizontalAlignment="Left"/>
+                                    <Grid ColumnDefinitions="*,8,120">
+                                        <Slider Name="GifStartFrameSlider" Grid.Column="0" Minimum="0" Maximum="0" Value="0" IsEnabled="False"/>
+                                        <TextBox Name="GifStartFrameInput" Grid.Column="2" IsEnabled="False" HorizontalContentAlignment="Center"/>
+                                    </Grid>
+                                    <TextBlock Name="GifFrameInfoLabel" Text="Frames: 0" FontSize="12"/>
+                                </StackPanel>
+                                <Button Grid.Row="1" Grid.Column="4" Name="ApplyStartFrameButton" Content="Apply Start" IsEnabled="False"/>
+                            </Grid>
                         </TabItem>
                     </TabControl>
                 </TabItem>
@@ -347,12 +357,15 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="4"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="4"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <Button Name="OpenButton" Grid.Column="0" Classes="NoOutline" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalAlignment="Stretch" VerticalContentAlignment="Center" CornerRadius="4" Padding="0">
                     <Image Source="avares://Autodraw/Assets/add-image.png"/>
                 </Button>
                 <Button Name="ProcessButton" Grid.Column="2" Classes="NoOutline" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalAlignment="Stretch" VerticalContentAlignment="Center" CornerRadius="4" FontSize="13" Content="{x:Static assets:Resources.ProcessIMG}"/>
                 <Button Name="RunButton" Grid.Column="4" Classes="NoOutline" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalAlignment="Stretch" VerticalContentAlignment="Center" CornerRadius="4" FontSize="13" Content="{x:Static assets:Resources.BeginDraw}"/>
+                <Button Name="ExportFramesButton" Grid.Column="6" Classes="NoOutline" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalAlignment="Stretch" VerticalContentAlignment="Center" CornerRadius="4" FontSize="13" Content="Export Frames"/>
             </Grid>
         </Grid>
     </Grid>

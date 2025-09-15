@@ -14,9 +14,9 @@ namespace Autodraw;
 
 public partial class ActionPrompt : Window, INotifyPropertyChanged
 {
-    public event PropertyChangedEventHandler? PropertyChanged;
+    public new event PropertyChangedEventHandler? PropertyChanged;
 
-    private string actionData;
+    private string actionData = string.Empty;
     public string ActionData
     {
         get => actionData;
@@ -44,11 +44,11 @@ public partial class ActionPrompt : Window, INotifyPropertyChanged
         ActionType.SelectionChanged += ActionTypeOnSelectionChanged;
     }
 
-    public String Speed { get; set; }
-    public String Delay { get; set; }
-    public String InputData { get; set; }
-    public int Selection { get; set; }
-    public Action Callback { get; set; }
+    public string Speed { get; set; } = string.Empty;
+    public string Delay { get; set; } = string.Empty;
+    public string InputData { get; set; } = string.Empty;
+    public int Selection { get; set; } = 0;
+    public Action Callback { get; set; } = () => { };
     public InputAction? Action { get; set; }
     private object? _rawActionData;
 

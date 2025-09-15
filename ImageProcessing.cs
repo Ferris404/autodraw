@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Diagnostics.CodeAnalysis;
 using Avalonia.Controls;
 using Avalonia.Media;
 using SkiaSharp;
@@ -30,7 +31,7 @@ public static class ImageProcessing
     private static readonly List<int[]> listCrosshatch = ReadPattern(patternCrosshatch.Pat);
     private static readonly List<int[]> listDiagCross = ReadPattern(patternDiagCross.Pat);
 
-    public static Filters _currentFilters = new()
+    public static Filters _currentFilters { get; set; } = new()
         { Invert = false, MaxThreshold = 127, AlphaThreshold = 200 };
 
     public static List<int[]> ReadPattern(string pat)
@@ -51,7 +52,7 @@ public static class ImageProcessing
         return positions;
     }
     
-    // TODO: Rewrite allat to be image based patterns 🙄
+    // Patterns could be extended to image-based in future if needed.
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint MakePixel(byte red, byte green, byte blue, byte alpha)
@@ -67,24 +68,24 @@ public static class ImageProcessing
         alpha = (byte)((*input >> 24) & 0xFF);
     }
     
-    public static byte AdjustThresh(byte rByte, byte gByte, byte bByte, byte aByte,  bool doinvert, float maxthresh, float minthresh, byte athresh)
+    public static byte AdjustThresh(byte rByte, byte gByte, byte bByte, byte aByte, Filters settings)
     {
-        float lumen = (rByte + gByte + bByte) / 3;
-        byte localThresh = (byte)(lumen > maxthresh || lumen < minthresh || aByte < athresh ? 255 : 0);
-        localThresh = doinvert == false ? localThresh : (byte)(255 - localThresh);
+        float lumen = (rByte + gByte + bByte) / 3f;
+        byte localThresh = (byte)((lumen > settings.MaxThreshold || lumen < settings.MinThreshold || aByte < settings.AlphaThreshold) ? 255 : 0);
+        localThresh = settings.Invert ? (byte)(255 - localThresh) : localThresh;
         return localThresh;
     }
     
     private static byte GetThreshold(float luminosity, byte alphaByte, Filters filterSettings)
     {
         byte threshByte =
-            (byte)(luminosity > filterSettings.MaxThreshold || luminosity < filterSettings.MinThreshold || alphaByte < filterSettings.AlphaThreshold
+            (byte)((luminosity > filterSettings.MaxThreshold || luminosity < filterSettings.MinThreshold || alphaByte < filterSettings.AlphaThreshold)
                 ? 255
                 : 0); // Thresholds Filter
-        return filterSettings.Invert == false ? threshByte : (byte)(255 - threshByte); // Invert
+        return filterSettings.Invert ? (byte)(255 - threshByte) : threshByte; // Invert
     }
 
-    private static unsafe byte GetOutlineAlpha(int y, int x, uint* basePtr, int width, int height, byte threshByte, Filters filterSettings)
+    private static unsafe byte GetOutlineAlpha(int y, int x, uint* basePtr, int width, int height, Filters filterSettings)
     {
         byte returnByte = 255;
         var doOutline = false;
@@ -114,7 +115,7 @@ public static class ImageProcessing
                     _ => throw new ArgumentException($"Invalid value {i}")
                 };
                 GetPixel(pixelAddress, out var rByte, out var gByte, out var bByte, out var aByte);
-                byte localThresh = AdjustThresh(rByte, gByte, bByte, aByte, filterSettings.Invert, filterSettings.MaxThreshold, filterSettings.MinThreshold, filterSettings.AlphaThreshold);
+                byte localThresh = AdjustThresh(rByte, gByte, bByte, aByte, filterSettings);
                 if (localThresh == 255) doOutline = true;
             }
         }
@@ -122,18 +123,29 @@ public static class ImageProcessing
         return returnByte;
     }
 
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "Pattern checks require several branches")]
     private static byte GetPatternAlpha(int y, int x, byte returnByte, Filters filterSettings)
     {
-        if (returnByte != 0 && (filterSettings.Crosshatch || filterSettings.DiagCrosshatch || filterSettings.HorizontalLines > 0 || filterSettings.VerticalLines > 0))
+        if (returnByte == 0) return 0;
+        bool any = filterSettings.Crosshatch || filterSettings.DiagCrosshatch || filterSettings.HorizontalLines > 0 || filterSettings.VerticalLines > 0;
+        if (!any) return returnByte;
+
+        if (filterSettings.DiagCrosshatch)
         {
-            if (filterSettings.DiagCrosshatch) // Diag Crosshatch
-                foreach (var patPoint in listDiagCross)
-                    if (x % patternDiagCross.Width == patPoint[0] && y % patternDiagCross.Height == patPoint[1])
-                        returnByte = 0;
-            if (filterSettings.Crosshatch) // Crosshatch
-                foreach (var patPoint in listCrosshatch)
-                    if (x % patternCrosshatch.Width == patPoint[0] && y % patternCrosshatch.Height == patPoint[1])
-                        returnByte = 0;
+            foreach (var patPoint in listDiagCross)
+            {
+                if (x % patternDiagCross.Width == patPoint[0] && y % patternDiagCross.Height == patPoint[1])
+                    return 0;
+            }
+        }
+
+        if (filterSettings.Crosshatch)
+        {
+            foreach (var patPoint in listCrosshatch)
+            {
+                if (x % patternCrosshatch.Width == patPoint[0] && y % patternCrosshatch.Height == patPoint[1])
+                    return 0;
+            }
         }
         return returnByte;
     }
@@ -152,6 +164,7 @@ public static class ImageProcessing
         var srcPtr = (byte*)borderBitmap.GetPixels().ToPointer();
 
         for (var y = 0; y < height; y++)
+        {
         for (var x = 0; x < width; x++)
         {
             byte returnByte = 255;
@@ -162,6 +175,7 @@ public static class ImageProcessing
             *srcPtr++ = returnByte;
             *srcPtr++ = returnByte;
             *srcPtr++ = 255;
+        }
         }
 
         return borderBitmap;
@@ -174,25 +188,26 @@ public static class ImageProcessing
         var srcPtr = (byte*)patternBitmap.GetPixels().ToPointer();
 
         for (var y = 0; y < height; y++)
+        {
         for (var x = 0; x < width; x++)
         {
             byte returnByte = 255;
-            if (horizontal > 0)
-                if (y % horizontal == 0)
-                    returnByte = 0;
-            if (vertical > 0)
-                if (x % vertical == 0)
-                    returnByte = 0;
+            if ((horizontal > 0 && y % horizontal == 0) || (vertical > 0 && x % vertical == 0))
+            {
+                returnByte = 0;
+            }
             
             *srcPtr++ = returnByte;
             *srcPtr++ = returnByte;
             *srcPtr++ = returnByte;
             *srcPtr++ = 255;
         }
+        }
 
         return patternBitmap;
     }
     
+    [SuppressMessage("Major Code Smell", "S3776:Complexity", Justification = "Image pipeline with optional stages")] 
     public static unsafe SKBitmap Process(SKBitmap sourceBitmap, Filters filterSettings)
     {
         if(Process_MemPressure>0) GC.RemoveMemoryPressure(Process_MemPressure);
@@ -207,11 +222,12 @@ public static class ImageProcessing
         var outline = filterSettings.Outline;
 
         for (var y = 0; y < height; y++)
+        {
         for (var x = 0; x < width; x++)
         {
             var srcPtr = basePtr + width * y + x;
             GetPixel(srcPtr, out var redByte, out var greenByte, out var blueByte, out var alphaByte);
-            var luminosity = (redByte + greenByte + blueByte) / 3;
+            var luminosity = (redByte + greenByte + blueByte) / 3f;
             byte threshByte = GetThreshold(luminosity, alphaByte, filterSettings);
         
             if (threshByte == 255)
@@ -223,7 +239,7 @@ public static class ImageProcessing
             byte returnByte = 255;
             if (outline)
             {
-                returnByte = GetOutlineAlpha(y, x, basePtr, width, height, threshByte, filterSettings);
+                returnByte = GetOutlineAlpha(y, x, basePtr, width, height, filterSettings);
             }
         
             if (isPatSet)
@@ -235,6 +251,7 @@ public static class ImageProcessing
                 returnByte = threshByte;
             }
             *returnPtr++ = MakePixel(returnByte, returnByte, returnByte, 255);
+        }
         }
         
         var invert = new float[20] {
@@ -350,6 +367,7 @@ public static class ImageProcessing
         var srcPtr = (byte*)sourceBitmap.GetPixels().ToPointer();
         
         for (var row = 0; row < height; row++)
+        {
         for (var col = 0; col < width; col++)
         {
             var b = *srcPtr++;
@@ -361,14 +379,15 @@ public static class ImageProcessing
             {
                 return Color.FromArgb(a, r, g, b);
             }
-        }
+    }
+    }
         return Color.FromArgb(0, 0, 0, 0);
     }
 
     public static unsafe SKBitmap NormalizeColor(this SKBitmap SourceBitmap)
     {
         var srcColor = SourceBitmap.ColorType;
-        var srcAlpha = SourceBitmap.AlphaType;
+    // Removed unused locals to satisfy analyzer
 
         if (srcColor == SKColorType.Bgra8888) return SourceBitmap;
         // Ensure we don't need to normalize it.
@@ -381,10 +400,12 @@ public static class ImageProcessing
         var width = OutputBitmap.Width;
         var height = OutputBitmap.Height;
 
-        var outColor = OutputBitmap.ColorType;
+    // Removed unused locals to satisfy analyzer
 
         for (var row = 0; row < height; row++)
+        {
         for (var col = 0; col < width; col++)
+        {
             if (srcColor == SKColorType.Gray8 || srcColor == SKColorType.Alpha8)
             {
                 var b = *srcPtr++;
@@ -415,6 +436,8 @@ public static class ImageProcessing
                 *dstPtr++ = (byte)(r * 2);
                 *dstPtr++ = (byte)(a * 2);
             }
+        }
+        }
 
         SourceBitmap.Dispose();
         SourceBitmap = OutputBitmap;
@@ -424,29 +447,29 @@ public static class ImageProcessing
 
     public class Filters
     {
-        public byte AlphaThreshold = 127;
-        public byte MaxThreshold = 127;
-        public byte MinThreshold = 0;
+        public byte AlphaThreshold { get; set; } = 127;
+        public byte MaxThreshold { get; set; } = 127;
+        public byte MinThreshold { get; set; } = 0;
         
-        public bool Crosshatch = false;
-        public bool DiagCrosshatch = false;
-        public decimal HorizontalLines = 0;
-        public decimal VerticalLines = 0;
+        public bool Crosshatch { get; set; } = false;
+        public bool DiagCrosshatch { get; set; } = false;
+        public decimal HorizontalLines { get; set; } = 0;
+        public decimal VerticalLines { get; set; } = 0;
         
-        public bool Invert = false;
-        public bool Outline = false;
+        public bool Invert { get; set; } = false;
+        public bool Outline { get; set; } = false;
 
-        public int BorderAdvanced = 5;
-        public int OutlineAdvanced = 0;
-        public int InlineAdvanced = 0;
-        public int InlineBorderAdvanced = 0;
-        public int ErosionAdvanced = 0;
+        public int BorderAdvanced { get; set; } = 5;
+        public int OutlineAdvanced { get; set; } = 0;
+        public int InlineAdvanced { get; set; } = 0;
+        public int InlineBorderAdvanced { get; set; } = 0;
+        public int ErosionAdvanced { get; set; } = 0;
     }
 
     public class Pattern
     {
-        public int Height = 2;
-        public string Pat = "0 0\n0 0";
-        public int Width = 2;
+        public int Height { get; set; } = 2;
+        public string Pat { get; set; } = "0 0\n0 0";
+        public int Width { get; set; } = 2;
     }
 }

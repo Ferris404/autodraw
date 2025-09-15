@@ -27,23 +27,23 @@ public static class ImageExtensions
     }
 }
 
-public class Config
+public static class Config
 {
-    public static string FolderPath =
+    public static string FolderPath { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoDraw");
 
-    public static KeyCode Keybind_StartDrawing = KeyCode.VcLeftShift;
-    public static KeyCode Keybind_StopDrawing = KeyCode.VcLeftAlt;
-    public static KeyCode Keybind_PauseDrawing = KeyCode.VcBackslash;
-    public static KeyCode Keybind_SkipRescan = KeyCode.VcBackspace;
-    public static KeyCode Keybind_LockPreview = KeyCode.VcLeftControl;
-    public static KeyCode Keybind_ClearLock = KeyCode.VcBackQuote;
+    public static KeyCode Keybind_StartDrawing { get; private set; } = KeyCode.VcLeftShift;
+    public static KeyCode Keybind_StopDrawing { get; private set; } = KeyCode.VcLeftAlt;
+    public static KeyCode Keybind_PauseDrawing { get; private set; } = KeyCode.VcBackslash;
+    public static KeyCode Keybind_SkipRescan { get; private set; } = KeyCode.VcBackspace;
+    public static KeyCode Keybind_LockPreview { get; private set; } = KeyCode.VcLeftControl;
+    public static KeyCode Keybind_ClearLock { get; private set; } = KeyCode.VcBackQuote;
     
-    public static Vector2 Preview_LastLockPos = new(0,0);
+    public static Vector2 Preview_LastLockPos { get; set; } = new(0,0);
 
-    public static string ConfigPath = Path.Combine(FolderPath, "config.json");
-    public static string ThemesPath = Path.Combine(FolderPath, "Themes");
-    public static string CachePath = Path.Combine(FolderPath, "Cache");
+    public static string ConfigPath { get; } = Path.Combine(FolderPath, "config.json");
+    public static string ThemesPath { get; set; } = Path.Combine(FolderPath, "Themes");
+    public static string CachePath { get; set; } = Path.Combine(FolderPath, "Cache");
 
     public static void init()
     {
@@ -65,52 +65,36 @@ public class Config
         Utils.Copy(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Styles"), ThemesPath);
         
         // Check Configuration Path for Themes
-        if (GetEntry("SavedThemesPath") is null || !Directory.Exists(GetEntry("SavedPath")))
+        var savedThemesPath = GetEntry("SavedThemesPath");
+        if (savedThemesPath is null || !Directory.Exists(GetEntry("SavedPath")))
         {
             Directory.CreateDirectory(ThemesPath);
             SetEntry("SavedThemesPath", ThemesPath);
         }
         else
         {
-            ThemesPath = GetEntry("SavedThemesPath")!;
+            ThemesPath = savedThemesPath!;
         }
         
         // Check Configuration Path for Cache
-        if (GetEntry("SavedCachePath") is null || !Directory.Exists(GetEntry("SavedPath")))
+        var savedCachePath = GetEntry("SavedCachePath");
+        if (savedCachePath is null || !Directory.Exists(GetEntry("SavedPath")))
         {
             Directory.CreateDirectory(CachePath);
             SetEntry("SavedCachePath", CachePath);
         }
         else
         {
-            CachePath = GetEntry("SavedCachePath")!;
+            CachePath = savedCachePath!;
         }
         
         // Get Keybinds
-        if (GetEntry("Keybind_StartDrawing") is not null)
-        {
-            Keybind_StartDrawing = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_StartDrawing")!);
-        }
-        if (GetEntry("Keybind_StopDrawing") is not null)
-        {
-            Keybind_StopDrawing = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_StopDrawing")!);
-        }
-        if (GetEntry("Keybind_PauseDrawing") is not null)
-        {
-            Keybind_PauseDrawing = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_PauseDrawing")!);
-        }
-        if (GetEntry("Keybind_SkipRescan") is not null)
-        {
-            Keybind_SkipRescan = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_SkipRescan")!);
-        }
-        if (GetEntry("Keybind_LockPreview") is not null)
-        {
-            Keybind_LockPreview = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_LockPreview")!);
-        }
-        if (GetEntry("Keybind_ClearLock") is not null)
-        {
-            Keybind_ClearLock = (KeyCode)Enum.Parse(typeof(KeyCode), GetEntry("Keybind_ClearLock")!);
-        }
+        Keybind_StartDrawing = EnumTryParseOr(Keybind_StartDrawing, GetEntry("Keybind_StartDrawing"));
+        Keybind_StopDrawing = EnumTryParseOr(Keybind_StopDrawing, GetEntry("Keybind_StopDrawing"));
+        Keybind_PauseDrawing = EnumTryParseOr(Keybind_PauseDrawing, GetEntry("Keybind_PauseDrawing"));
+        Keybind_SkipRescan = EnumTryParseOr(Keybind_SkipRescan, GetEntry("Keybind_SkipRescan"));
+        Keybind_LockPreview = EnumTryParseOr(Keybind_LockPreview, GetEntry("Keybind_LockPreview"));
+        Keybind_ClearLock = EnumTryParseOr(Keybind_ClearLock, GetEntry("Keybind_ClearLock"));
         
         if (GetEntry("Preview_LastLockedX") is not null && GetEntry("Preview_LastLockedY") is not null )
         {
@@ -136,24 +120,28 @@ public class Config
         File.WriteAllText(ConfigPath, JsonConvert.SerializeObject(jsonFile, Formatting.Indented));
         return true;
     }
+
+    private static KeyCode EnumTryParseOr(KeyCode fallback, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+        return Enum.TryParse<KeyCode>(raw, out var parsed) ? parsed : fallback;
+    }
 }
 
-public class Utils
+public static class Utils
 {
-    public static string LogFolder = Path.Combine(Config.FolderPath, "logs");
-    public static string LogsPath = Path.Combine(LogFolder, $"{DateTime.Now:dd.MM.yyyy}.txt");
-    public static bool LoggingEnabled = Config.GetEntry("logsEnabled") == "True";
-    public static StreamWriter? LogObject;
+    public static string LogFolder { get; } = Path.Combine(Config.FolderPath, "logs");
+    public static string LogsPath { get; } = Path.Combine(LogFolder, $"{DateTime.Now:dd.MM.yyyy}.txt");
+    public static bool LoggingEnabled { get; set; } = Config.GetEntry("logsEnabled") == "True";
+    // Removed persistent StreamWriter to avoid undisposed resource; use append per call.
 
     public static void Log(object data)
     {
         string text = data.ToString() ?? "null";
         Console.WriteLine(text);
         if (!LoggingEnabled) return;
-        if (!Directory.Exists(LogFolder)) Directory.CreateDirectory(LogFolder);
-        if (LogObject == null) LogObject = new StreamWriter(LogsPath);
-        LogObject.WriteLine(text);
-        LogObject.Flush();
+    if (!Directory.Exists(LogFolder)) Directory.CreateDirectory(LogFolder);
+    File.AppendAllText(LogsPath, text + Environment.NewLine);
     }
 
     public static void Copy(string sourceDirectory, string targetDirectory)
@@ -185,9 +173,9 @@ public class Utils
 }
 
 
-public class Marketplace
+public static class Marketplace
 {
-    public static string API = "https://auto-draw.com/api/";
+    public static string API { get; } = "https://auto-draw.com/api/";
     private static readonly HttpClient client = new HttpClient();
     
     public async static Task<JArray> List(string type) // 'type' can be either "theme" or "config"
@@ -204,7 +192,9 @@ public class Marketplace
         HttpResponseMessage response = await client.GetAsync($"{API}download?id={id}");
         if (!response.IsSuccessStatusCode) return null!;
         var FileResponse = await response.Content.ReadAsStringAsync();
-        File.WriteAllText(Path.Combine(Config.ThemesPath, response.Content.Headers.ContentDisposition?.FileName.Trim('"')), FileResponse);
-        return Path.Combine(Config.ThemesPath, response.Content.Headers.ContentDisposition?.FileName.Trim('"'));
+        var fileName = response.Content.Headers.ContentDisposition?.FileName.Trim('"');
+        var fullPath = Path.Combine(Config.ThemesPath, fileName);
+        await File.WriteAllTextAsync(fullPath, FileResponse);
+        return fullPath;
     }
 }

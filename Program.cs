@@ -3,7 +3,7 @@ using Avalonia;
 
 namespace Autodraw;
 
-internal class Program
+internal static class Program
 {
     private static bool compatability = false;
 
